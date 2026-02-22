@@ -13,17 +13,17 @@ class DB:
         self.resources = db['resources']
         self.videos = db['videos']
         self.questions = db['questions']
+        self.qbank_files = db['qbank_files']   # بانک فایل ادمین
         self.schedules = db['schedules']
         self.stats = db['stats']
         self.answers = db['answers']
-        self.lessons = db['lessons']      # درس‌های داینامیک
-        self.topics = db['topics']        # مباحث داینامیک
+        self.lessons = db['lessons']
+        self.topics = db['topics']
 
     # ───────────── DYNAMIC LESSONS ─────────────
     async def get_lessons(self):
         docs = await self.lessons.find({}).sort('name', 1).to_list(200)
         if not docs:
-            # بار اول: درس‌های پیش‌فرض رو ذخیره کن
             defaults = ['آناتومی', 'فیزیولوژی', 'بیوشیمی', 'بافت‌شناسی',
                         'میکروبیولوژی', 'پاتولوژی', 'ایمنی‌شناسی', 'فارماکولوژی',
                         'سمیولوژی', 'رادیولوژی']
@@ -163,6 +163,42 @@ class DB:
             {'metadata.tags': {'$elemMatch': {'$regex': text, '$options': 'i'}}}
         ]}).limit(20).to_list(20)
 
+    # ───────────── QBANK FILES (ادمین) ─────────────
+    async def add_qbank_file(self, lesson, topic, file_id, description, file_type='document'):
+        r = await self.qbank_files.insert_one({
+            'lesson': lesson, 'topic': topic,
+            'file_id': file_id, 'file_type': file_type,
+            'description': description,
+            'upload_date': datetime.now().isoformat(),
+            'downloads': 0
+        })
+        return r.inserted_id
+
+    async def get_qbank_files(self, lesson=None, topic=None):
+        q = {}
+        if lesson: q['lesson'] = lesson
+        if topic: q['topic'] = topic
+        return await self.qbank_files.find(q).sort('upload_date', -1).to_list(100)
+
+    async def get_qbank_file(self, fid):
+        try:
+            return await self.qbank_files.find_one({'_id': ObjectId(fid)})
+        except:
+            return None
+
+    async def inc_qbank_download(self, fid, uid):
+        try:
+            await self.qbank_files.update_one({'_id': ObjectId(fid)}, {'$inc': {'downloads': 1}})
+        except:
+            pass
+        await self.log(uid, 'qbank_download', {'file_id': fid})
+
+    async def delete_qbank_file(self, fid):
+        try:
+            await self.qbank_files.delete_one({'_id': ObjectId(fid)})
+        except:
+            pass
+
     # ───────────── VIDEOS ─────────────
     async def add_video(self, lesson, topic, teacher, date, file_id):
         r = await self.videos.insert_one({
@@ -191,12 +227,12 @@ class DB:
             pass
 
     # ───────────── QUESTIONS ─────────────
-    async def add_question(self, lesson, topic, difficulty, question, options, correct, explanation, creator):
+    async def add_question(self, lesson, topic, difficulty, question, options, correct, explanation, creator, auto_approve=False):
         r = await self.questions.insert_one({
             'lesson': lesson, 'topic': topic, 'difficulty': difficulty,
             'question': question, 'options': options,
             'correct_answer': correct, 'explanation': explanation,
-            'creator_id': creator, 'approved': False,
+            'creator_id': creator, 'approved': auto_approve,
             'created_at': datetime.now().isoformat(),
             'attempt_count': 0, 'correct_count': 0
         })
@@ -256,16 +292,15 @@ class DB:
         except:
             pass
         if not is_correct:
-            q = None
             try:
                 q = await self.questions.find_one({'_id': ObjectId(qid)})
+                if q:
+                    await self.users.update_one(
+                        {'user_id': uid},
+                        {'$addToSet': {'weak_topics': q['topic']}}
+                    )
             except:
                 pass
-            if q:
-                await self.users.update_one(
-                    {'user_id': uid},
-                    {'$addToSet': {'weak_topics': q['topic']}}
-                )
         await self.log(uid, 'answer', {'qid': qid, 'correct': is_correct})
 
     # ───────────── SCHEDULES ─────────────
@@ -273,7 +308,8 @@ class DB:
         r = await self.schedules.insert_one({
             'type': stype, 'lesson': lesson, 'teacher': teacher,
             'date': date, 'time': time, 'location': location, 'notes': notes,
-            'created_at': datetime.now().isoformat()
+            'created_at': datetime.now().isoformat(),
+            'notified_days': []   # روزهایی که یادآوری فرستاده شده
         })
         return r.inserted_id
 
@@ -296,6 +332,26 @@ class DB:
         return await self.schedules.find(
             {'type': 'exam', 'date': {'$gte': today, '$lte': future}}
         ).sort('date', 1).to_list(20)
+
+    async def get_exams_for_reminder(self, remind_days):
+        """برگرداندن امتحاناتی که باید امروز یادآوری بشن"""
+        target_date = (datetime.now() + timedelta(days=remind_days)).strftime('%Y-%m-%d')
+        key = f'd{remind_days}'
+        return await self.schedules.find({
+            'type': 'exam',
+            'date': target_date,
+            'notified_days': {'$ne': key}
+        }).to_list(50)
+
+    async def mark_exam_notified(self, sid, remind_days):
+        key = f'd{remind_days}'
+        try:
+            await self.schedules.update_one(
+                {'_id': ObjectId(sid)},
+                {'$addToSet': {'notified_days': key}}
+            )
+        except:
+            pass
 
     # ───────────── STATS ─────────────
     async def log(self, uid, action, data=None):
@@ -328,6 +384,7 @@ class DB:
             'resources': await self.resources.count_documents({}),
             'videos': await self.videos.count_documents({}),
             'questions': await self.questions.count_documents({'approved': True}),
+            'qbank_files': await self.qbank_files.count_documents({}),
             'downloads': await self.stats.count_documents({'action': 'download'})
         }
 
