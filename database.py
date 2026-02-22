@@ -16,6 +16,62 @@ class DB:
         self.schedules = db['schedules']
         self.stats = db['stats']
         self.answers = db['answers']
+        self.lessons = db['lessons']      # درس‌های داینامیک
+        self.topics = db['topics']        # مباحث داینامیک
+
+    # ───────────── DYNAMIC LESSONS ─────────────
+    async def get_lessons(self):
+        docs = await self.lessons.find({}).sort('name', 1).to_list(200)
+        if not docs:
+            # بار اول: درس‌های پیش‌فرض رو ذخیره کن
+            defaults = ['آناتومی', 'فیزیولوژی', 'بیوشیمی', 'بافت‌شناسی',
+                        'میکروبیولوژی', 'پاتولوژی', 'ایمنی‌شناسی', 'فارماکولوژی',
+                        'سمیولوژی', 'رادیولوژی']
+            for l in defaults:
+                await self.lessons.insert_one({'name': l, 'created_at': datetime.now().isoformat()})
+            docs = await self.lessons.find({}).sort('name', 1).to_list(200)
+        return [d['name'] for d in docs]
+
+    async def add_lesson(self, name):
+        existing = await self.lessons.find_one({'name': name})
+        if existing:
+            return False
+        await self.lessons.insert_one({'name': name, 'created_at': datetime.now().isoformat()})
+        return True
+
+    async def delete_lesson(self, name):
+        await self.lessons.delete_one({'name': name})
+
+    async def get_topics(self, lesson):
+        docs = await self.topics.find({'lesson': lesson}).sort('name', 1).to_list(200)
+        if not docs:
+            defaults = {
+                'آناتومی': ['اندام فوقانی', 'اندام تحتانی', 'تنه', 'سر و گردن', 'سیستم عصبی'],
+                'فیزیولوژی': ['قلب', 'تنفس', 'کلیه', 'عصبی', 'گوارش'],
+                'بیوشیمی': ['متابولیسم', 'آنزیم‌ها', 'اسیدهای نوکلئیک', 'پروتئین‌ها'],
+                'بافت‌شناسی': ['بافت پوششی', 'بافت پیوندی', 'بافت عضلانی', 'بافت عصبی'],
+                'میکروبیولوژی': ['باکتری‌ها', 'ویروس‌ها', 'قارچ‌ها', 'انگل‌ها'],
+                'پاتولوژی': ['التهاب', 'نئوپلازی', 'قلب', 'ریه', 'کبد'],
+                'ایمنی‌شناسی': ['ایمنی ذاتی', 'ایمنی اکتسابی', 'آنتی‌بادی'],
+                'فارماکولوژی': ['اصول کلی', 'قلب', 'عصبی', 'آنتی‌بیوتیک'],
+                'سمیولوژی': ['معاینه عمومی', 'قلب', 'ریه', 'شکم'],
+                'رادیولوژی': ['اشعه ایکس', 'CT Scan', 'MRI', 'سونوگرافی'],
+            }
+            lesson_topics = defaults.get(lesson, ['عمومی', 'پیشرفته'])
+            for t in lesson_topics:
+                await self.topics.insert_one({'lesson': lesson, 'name': t, 'created_at': datetime.now().isoformat()})
+            docs = await self.topics.find({'lesson': lesson}).sort('name', 1).to_list(200)
+        return [d['name'] for d in docs]
+
+    async def add_topic(self, lesson, name):
+        existing = await self.topics.find_one({'lesson': lesson, 'name': name})
+        if existing:
+            return False
+        await self.topics.insert_one({'lesson': lesson, 'name': name, 'created_at': datetime.now().isoformat()})
+        return True
+
+    async def delete_topic(self, lesson, name):
+        await self.topics.delete_one({'lesson': lesson, 'name': name})
 
     # ───────────── USERS ─────────────
     async def get_user(self, uid):
@@ -36,6 +92,9 @@ class DB:
 
     async def update_user(self, uid, data):
         await self.users.update_one({'user_id': uid}, {'$set': data})
+
+    async def delete_user(self, uid):
+        await self.users.delete_one({'user_id': uid})
 
     async def all_users(self, approved_only=True):
         q = {'approved': True} if approved_only else {}
@@ -76,12 +135,20 @@ class DB:
     async def get_resource(self, rid):
         try:
             return await self.resources.find_one({'_id': ObjectId(rid)})
-        except: return None
+        except:
+            return None
+
+    async def delete_resource(self, rid):
+        try:
+            await self.resources.delete_one({'_id': ObjectId(rid)})
+        except:
+            pass
 
     async def inc_download(self, rid, uid):
         try:
             await self.resources.update_one({'_id': ObjectId(rid)}, {'$inc': {'metadata.downloads': 1}})
-        except: pass
+        except:
+            pass
         await self.log(uid, 'download', {'resource_id': rid})
 
     async def new_resources_count(self, days=7):
@@ -114,7 +181,14 @@ class DB:
     async def get_video(self, vid):
         try:
             return await self.videos.find_one({'_id': ObjectId(vid)})
-        except: return None
+        except:
+            return None
+
+    async def delete_video(self, vid):
+        try:
+            await self.videos.delete_one({'_id': ObjectId(vid)})
+        except:
+            pass
 
     # ───────────── QUESTIONS ─────────────
     async def add_question(self, lesson, topic, difficulty, question, options, correct, explanation, creator):
@@ -134,8 +208,10 @@ class DB:
         if topic and topic != 'همه': q['topic'] = topic
         if difficulty: q['difficulty'] = difficulty
         if exclude:
-            try: q['_id'] = {'$nin': [ObjectId(i) for i in exclude]}
-            except: pass
+            try:
+                q['_id'] = {'$nin': [ObjectId(i) for i in exclude]}
+            except:
+                pass
         return await self.questions.find(q).limit(limit).to_list(limit)
 
     async def get_weak_questions(self, uid, limit=1):
@@ -153,12 +229,14 @@ class DB:
     async def approve_question(self, qid):
         try:
             await self.questions.update_one({'_id': ObjectId(qid)}, {'$set': {'approved': True}})
-        except: pass
+        except:
+            pass
 
     async def delete_question(self, qid):
         try:
             await self.questions.delete_one({'_id': ObjectId(qid)})
-        except: pass
+        except:
+            pass
 
     async def save_answer(self, uid, qid, selected, is_correct):
         await self.answers.insert_one({
@@ -175,11 +253,14 @@ class DB:
                 {'_id': ObjectId(qid)},
                 {'$inc': {'attempt_count': 1, 'correct_count': 1 if is_correct else 0}}
             )
-        except: pass
+        except:
+            pass
         if not is_correct:
             q = None
-            try: q = await self.questions.find_one({'_id': ObjectId(qid)})
-            except: pass
+            try:
+                q = await self.questions.find_one({'_id': ObjectId(qid)})
+            except:
+                pass
             if q:
                 await self.users.update_one(
                     {'user_id': uid},
@@ -199,8 +280,15 @@ class DB:
     async def get_schedules(self, stype=None, upcoming=True):
         q = {}
         if stype: q['type'] = stype
-        if upcoming: q['date'] = {'$gte': datetime.now().strftime('%Y-%m-%d')}
+        if upcoming:
+            q['date'] = {'$gte': datetime.now().strftime('%Y-%m-%d')}
         return await self.schedules.find(q).sort('date', 1).to_list(100)
+
+    async def delete_schedule(self, sid):
+        try:
+            await self.schedules.delete_one({'_id': ObjectId(sid)})
+        except:
+            pass
 
     async def upcoming_exams(self, days=7):
         today = datetime.now().strftime('%Y-%m-%d')
@@ -236,6 +324,7 @@ class DB:
     async def global_stats(self):
         return {
             'users': await self.users.count_documents({'approved': True}),
+            'pending': await self.users.count_documents({'approved': False}),
             'resources': await self.resources.count_documents({}),
             'videos': await self.videos.count_documents({}),
             'questions': await self.questions.count_documents({'approved': True}),
