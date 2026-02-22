@@ -38,6 +38,12 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from search import search_handler
             return await search_handler(update, context)
 
+    # ── حالت ساخت سوال (همه کاربران) ──
+    mode_all = context.user_data.get('mode', '')
+    if mode_all == 'creating_question':
+        from questions import handle_create_question_steps
+        return await handle_create_question_steps(update, context)
+
     # ── جستجو ──
     awaiting = context.user_data.get('awaiting_search', False)
     if awaiting:
