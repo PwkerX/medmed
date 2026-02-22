@@ -2,7 +2,6 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database import db
-from utils import LESSONS
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +37,12 @@ async def archive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = parts[1] if len(parts) > 1 else 'main'
 
     if action == 'main':
+        lessons = await db.get_lessons()
         keyboard = []
-        for i in range(0, len(LESSONS), 2):
-            row = [InlineKeyboardButton(LESSONS[i], callback_data=f'archive:lesson:{LESSONS[i]}'[:64])]
-            if i + 1 < len(LESSONS):
-                row.append(InlineKeyboardButton(LESSONS[i+1], callback_data=f'archive:lesson:{LESSONS[i+1]}'[:64]))
+        for i in range(0, len(lessons), 2):
+            row = [InlineKeyboardButton(lessons[i], callback_data=f'archive:lesson:{lessons[i]}'[:64])]
+            if i + 1 < len(lessons):
+                row.append(InlineKeyboardButton(lessons[i+1], callback_data=f'archive:lesson:{lessons[i+1]}'[:64]))
             keyboard.append(row)
         keyboard.append([InlineKeyboardButton("📅 آخرین کلاس‌ها", callback_data='archive:recent')])
         await query.edit_message_text(
