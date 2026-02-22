@@ -113,7 +113,10 @@ def main():
 
     # ── ConversationHandler اصلی ──
     conv = ConversationHandler(
-        entry_points=[CommandHandler('start', start_handler)],
+        entry_points=[
+            CommandHandler('start', start_handler),
+            CallbackQueryHandler(questions_callback, pattern='^questions:cr_topic:'),
+        ],
         states={
             REGISTER: [CallbackQueryHandler(register_start_callback, pattern="^register:")],
             STEP_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_name_handler),
@@ -127,7 +130,8 @@ def main():
             BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast_handler)],
             CREATING_Q: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_create_question_steps),
-                CallbackQueryHandler(handle_difficulty_choice, pattern='^qd:')
+                CallbackQueryHandler(handle_difficulty_choice, pattern='^qd:'),
+                CallbackQueryHandler(questions_callback, pattern='^questions:'),
             ],
         },
         fallbacks=[CommandHandler('start', start_handler)],
