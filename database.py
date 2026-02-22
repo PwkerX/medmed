@@ -1,562 +1,404 @@
 import os
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler
-from database import db
-
-logger = logging.getLogger(__name__)
-ANSWERING = 4
-CREATING_Q = 6
-ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
+import motor.motor_asyncio
+from datetime import datetime, timedelta
+from bson import ObjectId
 
 
-async def questions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    parts = data.split(':')
-    action = parts[1] if len(parts) > 1 else 'main'
+class DB:
+    def __init__(self):
+        uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017')
+        self.client = motor.motor_asyncio.AsyncIOMotorClient(uri)
+        db = self.client['medical_bot']
+        self.users = db['users']
+        self.resources = db['resources']
+        self.videos = db['videos']
+        self.questions = db['questions']
+        self.qbank_files = db['qbank_files']   # بانک فایل ادمین
+        self.schedules = db['schedules']
+        self.stats = db['stats']
+        self.answers = db['answers']
+        self.lessons = db['lessons']
+        self.topics = db['topics']
 
-    if action == 'main':
-        await _quiz_main_menu(query, update.effective_user.id)
+    # ───────────── DYNAMIC LESSONS ─────────────
+    async def get_lessons(self):
+        docs = await self.lessons.find({}).sort('name', 1).to_list(200)
+        if not docs:
+            defaults = ['آناتومی', 'فیزیولوژی', 'بیوشیمی', 'بافت‌شناسی',
+                        'میکروبیولوژی', 'پاتولوژی', 'ایمنی‌شناسی', 'فارماکولوژی',
+                        'سمیولوژی', 'رادیولوژی']
+            for l in defaults:
+                await self.lessons.insert_one({'name': l, 'created_at': datetime.now().isoformat()})
+            docs = await self.lessons.find({}).sort('name', 1).to_list(200)
+        return [d['name'] for d in docs]
 
-    # ── حالت ۱: بانک فایل ادمین ──
-    elif action == 'file_bank':
-        await _show_file_bank_lessons(query)
+    async def add_lesson(self, name):
+        existing = await self.lessons.find_one({'name': name})
+        if existing:
+            return False
+        await self.lessons.insert_one({'name': name, 'created_at': datetime.now().isoformat()})
+        return True
 
-    elif action == 'fb_lesson':
-        lesson = ':'.join(parts[2:])
-        await _show_file_bank_topics(query, lesson)
+    async def delete_lesson(self, name):
+        await self.lessons.delete_one({'name': name})
 
-    elif action == 'fb_topic':
-        lesson = parts[2]
-        topic = ':'.join(parts[3:])
-        await _show_file_bank_files(query, lesson, topic)
+    async def get_topics(self, lesson):
+        docs = await self.topics.find({'lesson': lesson}).sort('name', 1).to_list(200)
+        if not docs:
+            defaults = {
+                'آناتومی': ['اندام فوقانی', 'اندام تحتانی', 'تنه', 'سر و گردن', 'سیستم عصبی'],
+                'فیزیولوژی': ['قلب', 'تنفس', 'کلیه', 'عصبی', 'گوارش'],
+                'بیوشیمی': ['متابولیسم', 'آنزیم‌ها', 'اسیدهای نوکلئیک', 'پروتئین‌ها'],
+                'بافت‌شناسی': ['بافت پوششی', 'بافت پیوندی', 'بافت عضلانی', 'بافت عصبی'],
+                'میکروبیولوژی': ['باکتری‌ها', 'ویروس‌ها', 'قارچ‌ها', 'انگل‌ها'],
+                'پاتولوژی': ['التهاب', 'نئوپلازی', 'قلب', 'ریه', 'کبد'],
+                'ایمنی‌شناسی': ['ایمنی ذاتی', 'ایمنی اکتسابی', 'آنتی‌بادی'],
+                'فارماکولوژی': ['اصول کلی', 'قلب', 'عصبی', 'آنتی‌بیوتیک'],
+                'سمیولوژی': ['معاینه عمومی', 'قلب', 'ریه', 'شکم'],
+                'رادیولوژی': ['اشعه ایکس', 'CT Scan', 'MRI', 'سونوگرافی'],
+            }
+            lesson_topics = defaults.get(lesson, ['عمومی', 'پیشرفته'])
+            for t in lesson_topics:
+                await self.topics.insert_one({'lesson': lesson, 'name': t, 'created_at': datetime.now().isoformat()})
+            docs = await self.topics.find({'lesson': lesson}).sort('name', 1).to_list(200)
+        return [d['name'] for d in docs]
 
-    elif data.startswith('download_qbank:'):
-        qid = parts[1]
-        item = await db.get_qbank_file(qid)
-        if not item:
-            await query.answer("❌ فایل پیدا نشد!", show_alert=True)
-            return
-        await db.inc_qbank_download(qid, update.effective_user.id)
-        caption = (
-            f"🧪 <b>بانک سوال</b>\n"
-            f"📚 {item.get('lesson','')} — {item.get('topic','')}\n"
-            f"👨‍⚕️ {item.get('description','')}\n"
-            f"📥 {item.get('downloads',0)} دانلود"
+    async def add_topic(self, lesson, name):
+        existing = await self.topics.find_one({'lesson': lesson, 'name': name})
+        if existing:
+            return False
+        await self.topics.insert_one({'lesson': lesson, 'name': name, 'created_at': datetime.now().isoformat()})
+        return True
+
+    async def delete_topic(self, lesson, name):
+        await self.topics.delete_one({'lesson': lesson, 'name': name})
+
+    # ───────────── USERS ─────────────
+    async def get_user(self, uid):
+        return await self.users.find_one({'user_id': uid})
+
+    async def create_user(self, uid, name, student_id, group, username=None):
+        await self.users.insert_one({
+            'user_id': uid, 'name': name, 'student_id': student_id,
+            'group': group, 'username': username,
+            'registered_at': datetime.now().isoformat(),
+            'approved': False,
+            'notification_settings': {
+                'new_resources': True, 'schedule': True,
+                'exam': True, 'daily_question': True
+            },
+            'total_answers': 0, 'correct_answers': 0, 'weak_topics': []
+        })
+
+    async def update_user(self, uid, data):
+        await self.users.update_one({'user_id': uid}, {'$set': data})
+
+    async def delete_user(self, uid):
+        await self.users.delete_one({'user_id': uid})
+
+    async def all_users(self, approved_only=True):
+        q = {'approved': True} if approved_only else {}
+        return await self.users.find(q).to_list(5000)
+
+    async def pending_users(self):
+        return await self.users.find({'approved': False}).to_list(100)
+
+    async def notif_users(self, ntype):
+        return await self.users.find(
+            {'approved': True, f'notification_settings.{ntype}': True}
+        ).to_list(5000)
+
+    # ───────────── RESOURCES ─────────────
+    async def add_resource(self, term, lesson, topic, rtype, file_id, meta):
+        r = await self.resources.insert_one({
+            'term': term, 'lesson': lesson, 'topic': topic, 'type': rtype,
+            'file_id': file_id,
+            'metadata': {
+                'upload_date': datetime.now().isoformat(),
+                'downloads': 0,
+                'version': meta.get('version', '1.0'),
+                'tags': meta.get('tags', []),
+                'importance': meta.get('importance', 3),
+                'description': meta.get('description', '')
+            }
+        })
+        return r.inserted_id
+
+    async def get_resources(self, term=None, lesson=None, topic=None, rtype=None):
+        q = {}
+        if term: q['term'] = term
+        if lesson: q['lesson'] = lesson
+        if topic and topic != 'همه': q['topic'] = topic
+        if rtype and rtype != 'همه': q['type'] = rtype
+        return await self.resources.find(q).sort('metadata.upload_date', -1).to_list(100)
+
+    async def get_resource(self, rid):
+        try:
+            return await self.resources.find_one({'_id': ObjectId(rid)})
+        except:
+            return None
+
+    async def delete_resource(self, rid):
+        try:
+            await self.resources.delete_one({'_id': ObjectId(rid)})
+        except:
+            pass
+
+    async def inc_download(self, rid, uid):
+        try:
+            await self.resources.update_one({'_id': ObjectId(rid)}, {'$inc': {'metadata.downloads': 1}})
+        except:
+            pass
+        await self.log(uid, 'download', {'resource_id': rid})
+
+    async def new_resources_count(self, days=7):
+        ago = (datetime.now() - timedelta(days=days)).isoformat()
+        return await self.resources.count_documents({'metadata.upload_date': {'$gt': ago}})
+
+    async def search_resources(self, text):
+        return await self.resources.find({'$or': [
+            {'lesson': {'$regex': text, '$options': 'i'}},
+            {'topic': {'$regex': text, '$options': 'i'}},
+            {'type': {'$regex': text, '$options': 'i'}},
+            {'metadata.tags': {'$elemMatch': {'$regex': text, '$options': 'i'}}}
+        ]}).limit(20).to_list(20)
+
+    # ───────────── QBANK FILES (ادمین) ─────────────
+    async def add_qbank_file(self, lesson, topic, file_id, description, file_type='document'):
+        r = await self.qbank_files.insert_one({
+            'lesson': lesson, 'topic': topic,
+            'file_id': file_id, 'file_type': file_type,
+            'description': description,
+            'upload_date': datetime.now().isoformat(),
+            'downloads': 0
+        })
+        return r.inserted_id
+
+    async def get_qbank_files(self, lesson=None, topic=None):
+        q = {}
+        if lesson: q['lesson'] = lesson
+        if topic: q['topic'] = topic
+        return await self.qbank_files.find(q).sort('upload_date', -1).to_list(100)
+
+    async def get_qbank_file(self, fid):
+        try:
+            return await self.qbank_files.find_one({'_id': ObjectId(fid)})
+        except:
+            return None
+
+    async def inc_qbank_download(self, fid, uid):
+        try:
+            await self.qbank_files.update_one({'_id': ObjectId(fid)}, {'$inc': {'downloads': 1}})
+        except:
+            pass
+        await self.log(uid, 'qbank_download', {'file_id': fid})
+
+    async def delete_qbank_file(self, fid):
+        try:
+            await self.qbank_files.delete_one({'_id': ObjectId(fid)})
+        except:
+            pass
+
+    # ───────────── VIDEOS ─────────────
+    async def add_video(self, lesson, topic, teacher, date, file_id):
+        r = await self.videos.insert_one({
+            'lesson': lesson, 'topic': topic, 'teacher': teacher,
+            'date': date, 'file_id': file_id,
+            'upload_date': datetime.now().isoformat(), 'views': 0
+        })
+        return r.inserted_id
+
+    async def get_videos(self, lesson=None, teacher=None):
+        q = {}
+        if lesson: q['lesson'] = lesson
+        if teacher and teacher != 'همه': q['teacher'] = teacher
+        return await self.videos.find(q).sort('date', -1).to_list(100)
+
+    async def get_video(self, vid):
+        try:
+            return await self.videos.find_one({'_id': ObjectId(vid)})
+        except:
+            return None
+
+    async def delete_video(self, vid):
+        try:
+            await self.videos.delete_one({'_id': ObjectId(vid)})
+        except:
+            pass
+
+    # ───────────── QUESTIONS ─────────────
+    async def add_question(self, lesson, topic, difficulty, question, options, correct, explanation, creator, auto_approve=False):
+        r = await self.questions.insert_one({
+            'lesson': lesson, 'topic': topic, 'difficulty': difficulty,
+            'question': question, 'options': options,
+            'correct_answer': correct, 'explanation': explanation,
+            'creator_id': creator, 'approved': auto_approve,
+            'created_at': datetime.now().isoformat(),
+            'attempt_count': 0, 'correct_count': 0
+        })
+        return r.inserted_id
+
+    async def get_questions(self, lesson=None, topic=None, difficulty=None, limit=1, exclude=None):
+        q = {'approved': True}
+        if lesson: q['lesson'] = lesson
+        if topic and topic != 'همه': q['topic'] = topic
+        if difficulty: q['difficulty'] = difficulty
+        if exclude:
+            try:
+                q['_id'] = {'$nin': [ObjectId(i) for i in exclude]}
+            except:
+                pass
+        return await self.questions.find(q).limit(limit).to_list(limit)
+
+    async def get_weak_questions(self, uid, limit=1):
+        user = await self.get_user(uid)
+        weak = user.get('weak_topics', []) if user else []
+        if not weak:
+            return await self.get_questions(limit=limit)
+        return await self.questions.find(
+            {'approved': True, 'topic': {'$in': weak}}
+        ).limit(limit).to_list(limit)
+
+    async def pending_questions(self):
+        return await self.questions.find({'approved': False}).to_list(50)
+
+    async def approve_question(self, qid):
+        try:
+            await self.questions.update_one({'_id': ObjectId(qid)}, {'$set': {'approved': True}})
+        except:
+            pass
+
+    async def delete_question(self, qid):
+        try:
+            await self.questions.delete_one({'_id': ObjectId(qid)})
+        except:
+            pass
+
+    async def save_answer(self, uid, qid, selected, is_correct):
+        await self.answers.insert_one({
+            'user_id': uid, 'question_id': qid,
+            'selected': selected, 'is_correct': is_correct,
+            'answered_at': datetime.now().isoformat()
+        })
+        await self.users.update_one(
+            {'user_id': uid},
+            {'$inc': {'total_answers': 1, 'correct_answers': 1 if is_correct else 0}}
         )
         try:
-            await context.bot.send_document(
-                update.effective_chat.id, item['file_id'],
-                caption=caption, parse_mode='HTML'
+            await self.questions.update_one(
+                {'_id': ObjectId(qid)},
+                {'$inc': {'attempt_count': 1, 'correct_count': 1 if is_correct else 0}}
             )
         except:
+            pass
+        if not is_correct:
             try:
-                await context.bot.send_photo(
-                    update.effective_chat.id, item['file_id'],
-                    caption=caption, parse_mode='HTML'
-                )
+                q = await self.questions.find_one({'_id': ObjectId(qid)})
+                if q:
+                    await self.users.update_one(
+                        {'user_id': uid},
+                        {'$addToSet': {'weak_topics': q['topic']}}
+                    )
             except:
-                await query.answer("❌ خطا در ارسال!", show_alert=True)
-        return
+                pass
+        await self.log(uid, 'answer', {'qid': qid, 'correct': is_correct})
 
-    # ── حالت ۲: تمرین تستی ──
-    elif action == 'practice':
-        await _practice_menu(query)
-
-    elif action == 'free':
-        await _show_lesson_select(query, 'free')
-
-    elif action == 'weak':
-        context.user_data['quiz'] = {'mode': 'weak', 'answered': [], 'correct': 0}
-        await _next_question(query, context, update.effective_user.id)
-
-    elif action == 'hard':
-        context.user_data['quiz'] = {'mode': 'hard', 'difficulty': 'سخت 🔴', 'answered': [], 'correct': 0}
-        await _next_question(query, context, update.effective_user.id)
-
-    elif action == 'exam':
-        await _show_lesson_select(query, 'exam')
-
-    elif action == 'select_lesson':
-        mode = parts[2]
-        lesson = ':'.join(parts[3:]) if len(parts) > 3 else ''
-        if lesson:
-            context.user_data['quiz'] = {
-                'mode': mode, 'lesson': lesson,
-                'answered': [], 'correct': 0,
-                'total': 20 if mode == 'exam' else 999
-            }
-            await _show_topic_select(query, lesson, mode)
-
-    elif action == 'select_topic':
-        mode = parts[2]
-        lesson = parts[3]
-        topic = ':'.join(parts[4:])
-        context.user_data.setdefault('quiz', {})
-        context.user_data['quiz'].update({
-            'lesson': lesson, 'topic': topic, 'mode': mode,
-            'answered': [], 'correct': 0,
-            'total': 20 if mode == 'exam' else 999
+    # ───────────── SCHEDULES ─────────────
+    async def add_schedule(self, stype, lesson, teacher, date, time, location, notes=''):
+        r = await self.schedules.insert_one({
+            'type': stype, 'lesson': lesson, 'teacher': teacher,
+            'date': date, 'time': time, 'location': location, 'notes': notes,
+            'created_at': datetime.now().isoformat(),
+            'notified_days': []   # روزهایی که یادآوری فرستاده شده
         })
-        await _next_question(query, context, update.effective_user.id)
+        return r.inserted_id
 
-    elif action == 'next':
-        await _next_question(query, context, update.effective_user.id)
+    async def get_schedules(self, stype=None, upcoming=True):
+        q = {}
+        if stype: q['type'] = stype
+        if upcoming:
+            q['date'] = {'$gte': datetime.now().strftime('%Y-%m-%d')}
+        return await self.schedules.find(q).sort('date', 1).to_list(100)
 
-    elif action == 'stats':
-        await _quiz_stats(query, update.effective_user.id)
-
-    # ── طراحی سوال توسط کاربر ──
-    elif action == 'create':
-        await _create_question_start(query, context)
-
-    elif action == 'create_lesson':
-        lesson = ':'.join(parts[2:])
-        context.user_data['new_q'] = {'lesson': lesson}
-        await _create_q_select_topic(query, lesson)
-
-    elif action == 'create_topic':
-        lesson = context.user_data.get('new_q', {}).get('lesson', '')
-        topic = ':'.join(parts[2:])
-        context.user_data.setdefault('new_q', {})['topic'] = topic
-        context.user_data['mode'] = 'creating_question'
-        context.user_data['create_step'] = 'question'
-        await query.edit_message_text(
-            f"✏️ <b>طراحی سوال</b>\n📚 {lesson} — {topic}\n\n"
-            "📝 <b>گام ۱:</b> متن سوال را بنویسید:",
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("❌ لغو", callback_data='questions:main')
-            ]])
-        )
-        return CREATING_Q
-
-    elif data.startswith('answer:'):
-        await handle_question_answer(update, context)
-
-
-async def _quiz_main_menu(query, uid):
-    keyboard = [
-        [InlineKeyboardButton("📁 بانک سوال ادمین (دانلود فایل)", callback_data='questions:file_bank')],
-        [InlineKeyboardButton("🧪 تمرین تستی", callback_data='questions:practice')],
-        [InlineKeyboardButton("✏️ طراحی سوال", callback_data='questions:create')],
-        [InlineKeyboardButton("📊 آمار تمرین من", callback_data='questions:stats')]
-    ]
-    await query.edit_message_text(
-        "🧪 <b>بانک سوال</b>\n\n"
-        "📁 <b>بانک ادمین:</b> فایل‌های PDF/عکس بانک سوال مباحث\n"
-        "🧪 <b>تمرین تستی:</b> سوالات چهارگزینه‌ای\n"
-        "✏️ <b>طراحی سوال:</b> سوال بسازید و به بانک اضافه کنید",
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-# ─── بانک فایل ادمین ───
-
-async def _show_file_bank_lessons(query):
-    lessons = await db.get_lessons()
-    keyboard = []
-    for i in range(0, len(lessons), 2):
-        row = [InlineKeyboardButton(lessons[i], callback_data=f'questions:fb_lesson:{lessons[i]}'[:64])]
-        if i + 1 < len(lessons):
-            row.append(InlineKeyboardButton(lessons[i+1], callback_data=f'questions:fb_lesson:{lessons[i+1]}'[:64]))
-        keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='questions:main')])
-    await query.edit_message_text(
-        "📁 <b>بانک سوال ادمین</b>\n\nدرس را انتخاب کنید:",
-        parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def _show_file_bank_topics(query, lesson):
-    topics = await db.get_topics(lesson)
-    keyboard = [[InlineKeyboardButton(t, callback_data=f'questions:fb_topic:{lesson}:{t}'[:64])] for t in topics]
-    keyboard.append([InlineKeyboardButton("📂 همه مباحث", callback_data=f'questions:fb_topic:{lesson}:همه'[:64])])
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='questions:file_bank')])
-    await query.edit_message_text(
-        f"📁 <b>{lesson}</b>\n\nمبحث را انتخاب کنید:",
-        parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def _show_file_bank_files(query, lesson, topic):
-    files = await db.get_qbank_files(lesson=lesson, topic=topic if topic != 'همه' else None)
-    if not files:
-        await query.edit_message_text(
-            f"📁 {lesson} — {topic}\n\n❌ فایل بانک سوالی آپلود نشده.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 بازگشت", callback_data=f'questions:fb_lesson:{lesson}'[:64])
-            ]])
-        )
-        return
-    keyboard = []
-    for f in files:
-        fid = str(f['_id'])
-        label = f"📥 {f.get('topic','')} | {f.get('description','')[:20]} | ⬇️{f.get('downloads',0)}"
-        keyboard.append([InlineKeyboardButton(label, callback_data=f'download_qbank:{fid}')])
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data=f'questions:fb_lesson:{lesson}'[:64])])
-    await query.edit_message_text(
-        f"📁 <b>{lesson} — {topic}</b>\n{len(files)} فایل موجود:",
-        parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-# ─── تمرین تستی ───
-
-async def _practice_menu(query):
-    keyboard = [
-        [InlineKeyboardButton("📖 تمرین آزاد", callback_data='questions:free')],
-        [InlineKeyboardButton("⚡ تمرین نقاط ضعف", callback_data='questions:weak')],
-        [InlineKeyboardButton("📝 شبیه‌سازی امتحان (۲۰ سوال)", callback_data='questions:exam')],
-        [InlineKeyboardButton("🔴 سوالات سخت", callback_data='questions:hard')],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data='questions:main')]
-    ]
-    await query.edit_message_text(
-        "🧪 <b>تمرین تستی</b>\n\nحالت تمرین را انتخاب کنید:",
-        parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def _show_lesson_select(query, mode):
-    lessons = await db.get_lessons()
-    keyboard = []
-    for i in range(0, len(lessons), 2):
-        row = [InlineKeyboardButton(lessons[i], callback_data=f'questions:select_lesson:{mode}:{lessons[i]}'[:64])]
-        if i + 1 < len(lessons):
-            row.append(InlineKeyboardButton(lessons[i+1], callback_data=f'questions:select_lesson:{mode}:{lessons[i+1]}'[:64]))
-        keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='questions:practice')])
-    await query.edit_message_text("🧪 درس را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-
-async def _show_topic_select(query, lesson, mode):
-    topics = await db.get_topics(lesson)
-    keyboard = [[InlineKeyboardButton(t, callback_data=f'questions:select_topic:{mode}:{lesson}:{t}'[:64])] for t in topics]
-    keyboard.append([InlineKeyboardButton("📂 همه مباحث", callback_data=f'questions:select_topic:{mode}:{lesson}:همه'[:64])])
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='questions:practice')])
-    await query.edit_message_text(
-        f"🧪 <b>{lesson}</b>\n\nمبحث را انتخاب کنید:",
-        parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def _next_question(query, context, uid):
-    quiz = context.user_data.get('quiz', {})
-    mode = quiz.get('mode', 'free')
-    answered = quiz.get('answered', [])
-    total_limit = quiz.get('total', 999)
-
-    if len(answered) >= total_limit:
-        await _show_results(query, quiz)
-        return
-
-    if mode == 'weak':
-        questions = await db.get_weak_questions(uid, limit=1)
-    else:
-        questions = await db.get_questions(
-            lesson=quiz.get('lesson'),
-            topic=quiz.get('topic') if quiz.get('topic') != 'همه' else None,
-            difficulty=quiz.get('difficulty'),
-            limit=1, exclude=answered
-        )
-
-    if not questions:
-        await _show_results(query, quiz)
-        return
-
-    q = questions[0]
-    qid = str(q['_id'])
-    context.user_data['current_q'] = {
-        'id': qid,
-        'correct': q['correct_answer'],
-        'explanation': q.get('explanation', ''),
-        'topic': q.get('topic', '')
-    }
-
-    opts = q.get('options', [])
-    diff_map = {'آسان 🟢': '🟢', 'متوسط 🟡': '🟡', 'سخت 🔴': '🔴'}
-    diff_icon = diff_map.get(q.get('difficulty', ''), '⚪')
-    progress = f"{len(answered)+1}" + (f"/{total_limit}" if total_limit < 999 else "")
-
-    # نشان دهنده منبع سوال
-    creator = q.get('creator_id')
-    source = "👨‍⚕️ ادمین" if creator == int(os.getenv('ADMIN_ID', '0')) else "👤 دانشجو"
-
-    keyboard = []
-    for i, opt in enumerate(opts):
-        keyboard.append([InlineKeyboardButton(
-            f"{'ABCD'[i]}) {opt}", callback_data=f'answer:{qid}:{i+1}'
-        )])
-    keyboard.append([InlineKeyboardButton("⏭ رد کردن", callback_data=f'answer:{qid}:0')])
-
-    text = (
-        f"🧪 <b>{q.get('lesson','')} — {q.get('topic','')}</b>\n"
-        f"{diff_icon} {q.get('difficulty','')} | سوال {progress} | {source}\n"
-        f"━━━━━━━━━━━━━━━━━\n\n"
-        f"❓ <b>{q['question']}</b>"
-    )
-    try:
-        await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
-    except Exception as e:
-        logger.error(f"edit error: {e}")
-
-
-async def _show_results(query, quiz):
-    answered = len(quiz.get('answered', []))
-    correct = quiz.get('correct', 0)
-    pct = round(correct / answered * 100, 1) if answered > 0 else 0
-    if pct >= 80: emoji = "🏆 عالی!"
-    elif pct >= 60: emoji = "💪 خوب!"
-    elif pct >= 40: emoji = "📖 بیشتر تمرین کن"
-    else: emoji = "📚 مطالعه بیشتر لازم است"
-    keyboard = [
-        [InlineKeyboardButton("🔄 شروع مجدد", callback_data='questions:practice')],
-        [InlineKeyboardButton("📊 آمار کامل", callback_data='questions:stats')],
-        [InlineKeyboardButton("🔙 منوی بانک سوال", callback_data='questions:main')]
-    ]
-    await query.edit_message_text(
-        f"🎯 <b>پایان تمرین!</b>\n\n"
-        f"✅ صحیح: {correct} از {answered}\n"
-        f"📊 درصد: {pct}%\n\n{emoji}",
-        parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def handle_question_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    parts = query.data.split(':')
-    if len(parts) < 3:
-        return ANSWERING
-
-    qid, sel_str = parts[1], parts[2]
-    uid = update.effective_user.id
-    current = context.user_data.get('current_q', {})
-    correct_ans = current.get('correct', 1)
-    explanation = current.get('explanation', '')
-
-    quiz = context.user_data.get('quiz', {})
-    answered = quiz.get('answered', [])
-    answered.append(qid)
-    quiz['answered'] = answered
-
-    if sel_str == '0':
-        await db.save_answer(uid, qid, 0, False)
-        result = "⏭ <b>رد شد</b>"
-    else:
-        sel = int(sel_str)
-        is_correct = (sel == correct_ans)
-        await db.save_answer(uid, qid, sel, is_correct)
-        if is_correct:
-            quiz['correct'] = quiz.get('correct', 0) + 1
-            result = "✅ <b>صحیح!</b> 🎉"
-        else:
-            result = f"❌ <b>اشتباه!</b>\nجواب صحیح: گزینه <b>{correct_ans}</b>"
-
-    context.user_data['quiz'] = quiz
-
-    if explanation:
-        result += f"\n\n💡 <b>توضیح:</b>\n{explanation}"
-
-    keyboard = [
-        [InlineKeyboardButton("➡️ سوال بعدی", callback_data='questions:next')],
-        [InlineKeyboardButton("🏠 منوی اصلی", callback_data='questions:main')]
-    ]
-    try:
-        await query.edit_message_text(result, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
-    except Exception as e:
-        logger.error(f"answer edit error: {e}")
-    return ANSWERING
-
-
-# ─── طراحی سوال توسط کاربر ───
-
-async def _create_question_start(query, context):
-    lessons = await db.get_lessons()
-    keyboard = []
-    for i in range(0, len(lessons), 2):
-        row = [InlineKeyboardButton(lessons[i], callback_data=f'questions:create_lesson:{lessons[i]}'[:64])]
-        if i + 1 < len(lessons):
-            row.append(InlineKeyboardButton(lessons[i+1], callback_data=f'questions:create_lesson:{lessons[i+1]}'[:64]))
-        keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='questions:main')])
-    await query.edit_message_text(
-        "✏️ <b>طراحی سوال جدید</b>\n\n"
-        "سوال شما بعد از تأیید ادمین به بانک اضافه می‌شود.\n\n"
-        "درس را انتخاب کنید:",
-        parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def _create_q_select_topic(query, lesson):
-    topics = await db.get_topics(lesson)
-    keyboard = [[InlineKeyboardButton(t, callback_data=f'questions:create_topic:{t}'[:64])] for t in topics]
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='questions:create')])
-    await query.edit_message_text(
-        f"✏️ <b>{lesson}</b>\n\nمبحث را انتخاب کنید:",
-        parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def handle_create_question_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """هندل کردن مراحل ساخت سوال"""
-    uid = update.effective_user.id
-    text = update.message.text.strip()
-    step = context.user_data.get('create_step', '')
-    new_q = context.user_data.get('new_q', {})
-
-    if step == 'question':
-        new_q['question'] = text
-        context.user_data['create_step'] = 'options'
-        context.user_data['new_q'] = new_q
-        await update.message.reply_text(
-            "📝 <b>گام ۲:</b> ۴ گزینه را بنویسید\n\n"
-            "هر گزینه در یک خط:\n"
-            "<code>گزینه الف\nگزینه ب\nگزینه ج\nگزینه د</code>",
-            parse_mode='HTML'
-        )
-        return CREATING_Q
-
-    elif step == 'options':
-        lines = [l.strip() for l in text.split('\n') if l.strip()]
-        if len(lines) != 4:
-            await update.message.reply_text("❌ دقیقاً ۴ گزینه در ۴ خط بنویسید:")
-            return CREATING_Q
-        new_q['options'] = lines
-        context.user_data['create_step'] = 'correct'
-        context.user_data['new_q'] = new_q
-        opts_text = '\n'.join(f"{'ABCD'[i]}) {o}" for i, o in enumerate(lines))
-        await update.message.reply_text(
-            f"✅ گزینه‌ها:\n{opts_text}\n\n"
-            "📝 <b>گام ۳:</b> شماره گزینه صحیح را بنویسید (1 تا 4):",
-            parse_mode='HTML'
-        )
-        return CREATING_Q
-
-    elif step == 'correct':
+    async def delete_schedule(self, sid):
         try:
-            correct = int(text)
-            if correct < 1 or correct > 4:
-                raise ValueError()
+            await self.schedules.delete_one({'_id': ObjectId(sid)})
         except:
-            await update.message.reply_text("❌ عدد 1 تا 4 وارد کنید:")
-            return CREATING_Q
-        new_q['correct'] = correct
-        context.user_data['create_step'] = 'difficulty'
-        context.user_data['new_q'] = new_q
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🟢 آسان", callback_data='qd:آسان 🟢'),
-             InlineKeyboardButton("🟡 متوسط", callback_data='qd:متوسط 🟡'),
-             InlineKeyboardButton("🔴 سخت", callback_data='qd:سخت 🔴')]
-        ])
-        await update.message.reply_text("📝 <b>گام ۴:</b> سطح سختی:", parse_mode='HTML', reply_markup=keyboard)
-        return CREATING_Q
+            pass
 
-    elif step == 'explanation':
-        new_q['explanation'] = text if text != '-' else ''
-        context.user_data['new_q'] = new_q
-        await _finalize_question(update, context)
-        return ConversationHandler.END
+    async def upcoming_exams(self, days=7):
+        today = datetime.now().strftime('%Y-%m-%d')
+        future = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
+        return await self.schedules.find(
+            {'type': 'exam', 'date': {'$gte': today, '$lte': future}}
+        ).sort('date', 1).to_list(20)
 
-    return CREATING_Q
+    async def get_exams_for_reminder(self, remind_days):
+        """برگرداندن امتحاناتی که باید امروز یادآوری بشن"""
+        target_date = (datetime.now() + timedelta(days=remind_days)).strftime('%Y-%m-%d')
+        key = f'd{remind_days}'
+        return await self.schedules.find({
+            'type': 'exam',
+            'date': target_date,
+            'notified_days': {'$ne': key}
+        }).to_list(50)
 
-
-async def handle_difficulty_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """هندل کردن انتخاب سختی با دکمه"""
-    query = update.callback_query
-    await query.answer()
-    if not query.data.startswith('qd:'):
-        return CREATING_Q
-
-    difficulty = query.data[3:]
-    new_q = context.user_data.get('new_q', {})
-    new_q['difficulty'] = difficulty
-    context.user_data['new_q'] = new_q
-    context.user_data['create_step'] = 'explanation'
-
-    await query.edit_message_text(
-        "📝 <b>گام ۵ (آخر):</b> توضیح جواب را بنویسید\n\n"
-        "اگر توضیحی ندارید، فقط <code>-</code> بنویسید:",
-        parse_mode='HTML'
-    )
-    return CREATING_Q
-
-
-async def _finalize_question(update, context):
-    uid = update.effective_user.id
-    new_q = context.user_data.get('new_q', {})
-    ADMIN_ID_val = int(os.getenv('ADMIN_ID', '0'))
-
-    # اگه ادمینه، مستقیم تأیید بشه
-    auto_approve = (uid == ADMIN_ID_val)
-
-    await db.add_question(
-        lesson=new_q.get('lesson', ''),
-        topic=new_q.get('topic', ''),
-        difficulty=new_q.get('difficulty', 'متوسط 🟡'),
-        question=new_q.get('question', ''),
-        options=new_q.get('options', []),
-        correct=new_q.get('correct', 1),
-        explanation=new_q.get('explanation', ''),
-        creator=uid,
-        auto_approve=auto_approve
-    )
-
-    if auto_approve:
-        await update.message.reply_text(
-            "✅ <b>سوال اضافه شد!</b>\n"
-            f"📚 {new_q.get('lesson','')} — {new_q.get('topic','')}",
-            parse_mode='HTML'
-        )
-    else:
-        await update.message.reply_text(
-            "✅ <b>سوال ثبت شد!</b>\n"
-            "⏳ بعد از تأیید ادمین به بانک اضافه می‌شود.\n"
-            f"📚 {new_q.get('lesson','')} — {new_q.get('topic','')}",
-            parse_mode='HTML'
-        )
-        # اطلاع به ادمین
+    async def mark_exam_notified(self, sid, remind_days):
+        key = f'd{remind_days}'
         try:
-            await context.bot.send_message(
-                ADMIN_ID_val,
-                f"⏳ <b>سوال جدید برای تأیید:</b>\n"
-                f"📚 {new_q.get('lesson','')} — {new_q.get('topic','')}\n"
-                f"❓ {new_q.get('question','')[:80]}",
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("⏳ بررسی سوالات", callback_data='admin:pending_q')
-                ]])
+            await self.schedules.update_one(
+                {'_id': ObjectId(sid)},
+                {'$addToSet': {'notified_days': key}}
             )
         except:
             pass
 
-    # پاک کردن state
-    for k in ['new_q', 'create_step', 'mode']:
-        context.user_data.pop(k, None)
+    # ───────────── STATS ─────────────
+    async def log(self, uid, action, data=None):
+        await self.stats.insert_one({
+            'user_id': uid, 'action': action,
+            'data': data or {}, 'timestamp': datetime.now().isoformat()
+        })
+
+    async def user_stats(self, uid):
+        downloads = await self.stats.count_documents({'user_id': uid, 'action': 'download'})
+        week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+        week_act = await self.stats.count_documents(
+            {'user_id': uid, 'timestamp': {'$gt': week_ago}}
+        )
+        user = await self.get_user(uid)
+        total = user.get('total_answers', 0) if user else 0
+        correct = user.get('correct_answers', 0) if user else 0
+        pct = round(correct / total * 100, 1) if total > 0 else 0
+        return {
+            'downloads': downloads, 'total_answers': total,
+            'correct_answers': correct, 'percentage': pct,
+            'week_activity': week_act,
+            'weak_topics': user.get('weak_topics', []) if user else []
+        }
+
+    async def global_stats(self):
+        return {
+            'users': await self.users.count_documents({'approved': True}),
+            'pending': await self.users.count_documents({'approved': False}),
+            'resources': await self.resources.count_documents({}),
+            'videos': await self.videos.count_documents({}),
+            'questions': await self.questions.count_documents({'approved': True}),
+            'qbank_files': await self.qbank_files.count_documents({}),
+            'downloads': await self.stats.count_documents({'action': 'download'})
+        }
+
+    async def weekly_activity(self, uid):
+        result = []
+        for i in range(6, -1, -1):
+            day = datetime.now() - timedelta(days=i)
+            s = day.replace(hour=0, minute=0, second=0).isoformat()
+            e = day.replace(hour=23, minute=59, second=59).isoformat()
+            count = await self.stats.count_documents(
+                {'user_id': uid, 'timestamp': {'$gte': s, '$lte': e}}
+            )
+            result.append((day.strftime('%m/%d'), count))
+        return result
 
 
-async def _quiz_stats(query, uid):
-    stats = await db.user_stats(uid)
-    total = stats['total_answers']
-    correct = stats['correct_answers']
-    wrong = total - correct
-    pct = stats['percentage']
-    bar_len = 15
-    filled = int(correct / total * bar_len) if total > 0 else 0
-    bar = '🟩' * filled + '🟥' * (bar_len - filled) if total > 0 else '⬜' * bar_len
-    weak = stats['weak_topics']
-    weak_text = '\n'.join(f"  • {t}" for t in weak[:5]) if weak else "  هیچ نقطه ضعفی ندارید! 🎉"
-    keyboard = [
-        [InlineKeyboardButton("⚡ تمرین نقاط ضعف", callback_data='questions:weak')],
-        [InlineKeyboardButton("🔙 بازگشت", callback_data='questions:main')]
-    ]
-    await query.edit_message_text(
-        f"📊 <b>آمار بانک سوال</b>\n\n{bar}\n\n"
-        f"✅ صحیح: <b>{correct}</b>\n❌ اشتباه: <b>{wrong}</b>\n"
-        f"📈 درصد: <b>{pct}%</b>\n━━━━━━━━━━━━━\n"
-        f"⚡ <b>نقاط ضعف:</b>\n{weak_text}",
-        parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+db = DB()
