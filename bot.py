@@ -34,6 +34,9 @@ from notifications import notifications_callback
 from admin import admin_callback, admin_broadcast_handler, BROADCAST
 from search import search_handler, SEARCH
 from message_router import route_message
+from basic_science import basic_science_callback
+from content_admin import content_admin_callback, ca_file_handler, ca_text_handler, CA_WAITING_FILE, CA_WAITING_TEXT
+from faq import faq_callback
 
 logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
@@ -133,6 +136,14 @@ def main():
                 CallbackQueryHandler(handle_difficulty_choice, pattern='^qd:'),
                 CallbackQueryHandler(questions_callback, pattern='^questions:'),
             ],
+            CA_WAITING_FILE: [
+                MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.VOICE, ca_file_handler),
+                CallbackQueryHandler(content_admin_callback, pattern='^ca:'),
+            ],
+            CA_WAITING_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ca_text_handler),
+                CallbackQueryHandler(content_admin_callback, pattern='^ca:'),
+            ],
         },
         fallbacks=[CommandHandler('start', start_handler)],
         allow_reentry=True,
@@ -150,10 +161,23 @@ def main():
     app.add_handler(CallbackQueryHandler(notifications_callback, pattern='^notif'))
     app.add_handler(CallbackQueryHandler(admin_callback,         pattern='^admin'))
 
+    # ── Basic Science & FAQ & Content Admin ──
+    app.add_handler(CallbackQueryHandler(basic_science_callback, pattern='^(bs:|bs_dl:)'))
+    app.add_handler(CallbackQueryHandler(faq_callback,           pattern='^faq:'))
+    app.add_handler(CallbackQueryHandler(content_admin_callback, pattern='^ca:'))
+
     # ── File & Voice Handler ──
+    async def unified_file_handler(update, context):
+        uid = update.effective_user.id
+        ca_mode = context.user_data.get('ca_mode', '')
+        if ca_mode == 'waiting_file' and await db.is_content_admin(uid):
+            return await ca_file_handler(update, context)
+        if uid == int(os.getenv('ADMIN_ID', '0')):
+            return await upload_file_handler(update, context)
+
     app.add_handler(MessageHandler(
         filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.VOICE,
-        upload_file_handler
+        unified_file_handler
     ))
 
     # ── Text Router ──
