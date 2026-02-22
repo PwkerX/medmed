@@ -3,38 +3,46 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from database import db
-from utils import LESSONS, TERMS, NOTIF_LABELS
+from utils import NOTIF_LABELS
 
 logger = logging.getLogger(__name__)
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 SEARCH = 3
+TERMS = ['ترم ۱', 'ترم ۲', 'ترم ۳', 'ترم ۴', 'ترم ۵', 'ترم ۶', 'ترم ۷']
 
 
 async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text
 
-    # ── حالت‌های فعال ──
-    mode = context.user_data.get('mode', '')
+    # ── حالت‌های فعال ادمین ──
+    if uid == ADMIN_ID:
+        mode = context.user_data.get('mode', '')
+        if mode in ('add_lesson', 'add_topic', 'edit_user'):
+            from admin import handle_admin_text
+            handled = await handle_admin_text(update, context)
+            if handled:
+                return
+
+        if mode == 'broadcast':
+            from admin import admin_broadcast_handler
+            return await admin_broadcast_handler(update, context)
+
+        if mode == 'add_question':
+            context.user_data['search_mode'] = 'add_question'
+            from search import search_handler
+            return await search_handler(update, context)
+
+        if mode == 'add_schedule':
+            context.user_data['search_mode'] = 'add_schedule'
+            from search import search_handler
+            return await search_handler(update, context)
+
+    # ── جستجو ──
     awaiting = context.user_data.get('awaiting_search', False)
-
-    if awaiting or mode == 'search':
+    if awaiting:
         from search import search_handler
         return await search_handler(update, context)
-
-    if mode == 'add_question':
-        context.user_data['search_mode'] = 'add_question'
-        from search import search_handler
-        return await search_handler(update, context)
-
-    if mode == 'add_schedule':
-        context.user_data['search_mode'] = 'add_schedule'
-        from search import search_handler
-        return await search_handler(update, context)
-
-    if mode == 'broadcast':
-        from admin import admin_broadcast_handler
-        return await admin_broadcast_handler(update, context)
 
     # ── بررسی کاربر ──
     user = await db.get_user(uid)
@@ -64,11 +72,12 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif text == "🎥 آرشیو":
+        lessons = await db.get_lessons()
         keyboard = []
-        for i in range(0, len(LESSONS), 2):
-            row = [InlineKeyboardButton(LESSONS[i], callback_data=f'archive:lesson:{LESSONS[i]}'[:64])]
-            if i + 1 < len(LESSONS):
-                row.append(InlineKeyboardButton(LESSONS[i+1], callback_data=f'archive:lesson:{LESSONS[i+1]}'[:64]))
+        for i in range(0, len(lessons), 2):
+            row = [InlineKeyboardButton(lessons[i], callback_data=f'archive:lesson:{lessons[i]}'[:64])]
+            if i + 1 < len(lessons):
+                row.append(InlineKeyboardButton(lessons[i+1], callback_data=f'archive:lesson:{lessons[i+1]}'[:64]))
             keyboard.append(row)
         keyboard.append([InlineKeyboardButton("📅 آخرین کلاس‌ها", callback_data='archive:recent')])
         await update.message.reply_text("🎥 <b>آرشیو کلاس‌ها</b>", parse_mode='HTML',
@@ -128,10 +137,13 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "👨‍⚕️ پنل ادمین" and uid == ADMIN_ID:
         keyboard = [
             [InlineKeyboardButton("📊 آمار سیستم", callback_data='admin:stats')],
-            [InlineKeyboardButton("👥 کاربران", callback_data='admin:users'),
+            [InlineKeyboardButton("👥 مدیریت کاربران", callback_data='admin:users'),
              InlineKeyboardButton("⏳ تأیید", callback_data='admin:pending')],
             [InlineKeyboardButton("📚 آپلود منبع", callback_data='admin:upload_resource'),
              InlineKeyboardButton("🎥 آپلود ویدیو", callback_data='admin:upload_video')],
+            [InlineKeyboardButton("🗑 حذف منبع", callback_data='admin:list_resources'),
+             InlineKeyboardButton("🗑 حذف ویدیو", callback_data='admin:list_videos')],
+            [InlineKeyboardButton("📝 مدیریت درس‌ها", callback_data='admin:manage_lessons')],
             [InlineKeyboardButton("➕ سوال جدید", callback_data='admin:add_question'),
              InlineKeyboardButton("⏳ تأیید سوالات", callback_data='admin:pending_q')],
             [InlineKeyboardButton("📅 برنامه جدید", callback_data='admin:add_schedule')],
