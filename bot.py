@@ -18,7 +18,9 @@ from telegram.ext import (
     CallbackQueryHandler, ConversationHandler
 )
 
-from start import start_handler, register_handler, REGISTER
+from start import (start_handler, register_handler, register_start_callback,
+                   step_name_handler, step_student_id_handler,
+                   REGISTER, STEP_NAME, STEP_STUDENT_ID, STEP_GROUP)
 from dashboard import dashboard_callback
 from resources import resources_callback, upload_file_handler, upload_metadata_handler, UPLOAD_METADATA
 from archive import archive_callback
@@ -113,7 +115,12 @@ def main():
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start_handler)],
         states={
-            REGISTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_handler)],
+            REGISTER: [CallbackQueryHandler(register_start_callback, pattern="^register:")],
+            STEP_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_name_handler),
+                        CallbackQueryHandler(register_start_callback, pattern="^register:cancel")],
+            STEP_STUDENT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_student_id_handler),
+                              CallbackQueryHandler(register_start_callback, pattern="^register:cancel")],
+            STEP_GROUP: [CallbackQueryHandler(register_start_callback, pattern="^register:(group1|group2|cancel)")],
             UPLOAD_METADATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, upload_metadata_handler)],
             SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, search_handler)],
             ANSWERING: [CallbackQueryHandler(handle_question_answer, pattern='^answer:')],
