@@ -15,11 +15,15 @@ class DB:
         self.schedules = _db['schedules']
         self.stats = _db['stats']
         self.answers = _db['answers']
-        # علوم پایه - ساختار جدید
-        self.basic_sci_lessons = _db['bs_lessons']    # درس‌های هر ترم
-        self.basic_sci_sessions = _db['bs_sessions']  # جلسات هر درس
-        self.basic_sci_content = _db['bs_content']    # محتوای هر جلسه
-        # سوالات متداول
+        # علوم پایه
+        self.basic_sci_lessons = _db['bs_lessons']
+        self.basic_sci_sessions = _db['bs_sessions']
+        self.basic_sci_content = _db['bs_content']
+        # رفرنس‌ها
+        self.ref_subjects = _db['ref_subjects']   # درس‌های رفرنس
+        self.ref_books = _db['ref_books']          # کتاب‌های هر درس
+        self.ref_files = _db['ref_files']          # فایل‌های PDF هر کتاب
+        # FAQ
         self.faq = _db['faq']
 
     # ───────────── USERS ─────────────
@@ -32,7 +36,7 @@ class DB:
             'group': group, 'username': username,
             'registered_at': datetime.now().isoformat(),
             'approved': False,
-            'role': 'student',   # student | content_admin | admin
+            'role': 'student',
             'notification_settings': {
                 'new_resources': True, 'schedule': True,
                 'exam': True, 'daily_question': True
@@ -70,10 +74,7 @@ class DB:
 
     # ───────────── علوم پایه - درس‌های ترم ─────────────
     async def bs_get_lessons(self, term):
-        """درس‌های یک ترم خاص"""
-        return await self.basic_sci_lessons.find(
-            {'term': term}
-        ).sort('order', 1).to_list(50)
+        return await self.basic_sci_lessons.find({'term': term}).sort('order', 1).to_list(50)
 
     async def bs_add_lesson(self, term, name, teacher=''):
         existing = await self.basic_sci_lessons.find_one({'term': term, 'name': name})
@@ -90,7 +91,6 @@ class DB:
         try:
             oid = ObjectId(lesson_id)
             await self.basic_sci_lessons.delete_one({'_id': oid})
-            # حذف جلسات و محتوا
             sessions = await self.basic_sci_sessions.find({'lesson_id': lesson_id}).to_list(200)
             for s in sessions:
                 await self.basic_sci_content.delete_many({'session_id': str(s['_id'])})
@@ -104,26 +104,19 @@ class DB:
         except:
             return None
 
-    # ───────────── علوم پایه - جلسات ─────────────
     async def bs_get_sessions(self, lesson_id):
-        return await self.basic_sci_sessions.find(
-            {'lesson_id': lesson_id}
-        ).sort('number', 1).to_list(200)
+        return await self.basic_sci_sessions.find({'lesson_id': lesson_id}).sort('number', 1).to_list(200)
 
     async def bs_add_session(self, lesson_id, number, topic, teacher):
-        existing = await self.basic_sci_sessions.find_one(
-            {'lesson_id': lesson_id, 'number': number}
-        )
+        existing = await self.basic_sci_sessions.find_one({'lesson_id': lesson_id, 'number': number})
         if existing:
             await self.basic_sci_sessions.update_one(
-                {'_id': existing['_id']},
-                {'$set': {'topic': topic, 'teacher': teacher}}
+                {'_id': existing['_id']}, {'$set': {'topic': topic, 'teacher': teacher}}
             )
             return str(existing['_id'])
         r = await self.basic_sci_sessions.insert_one({
-            'lesson_id': lesson_id, 'number': number,
-            'topic': topic, 'teacher': teacher,
-            'created_at': datetime.now().isoformat()
+            'lesson_id': lesson_id, 'number': number, 'topic': topic,
+            'teacher': teacher, 'created_at': datetime.now().isoformat()
         })
         return str(r.inserted_id)
 
@@ -140,20 +133,13 @@ class DB:
         except:
             pass
 
-    # ───────────── علوم پایه - محتوا ─────────────
     async def bs_get_content(self, session_id):
-        return await self.basic_sci_content.find(
-            {'session_id': session_id}
-        ).sort('uploaded_at', 1).to_list(50)
+        return await self.basic_sci_content.find({'session_id': session_id}).sort('uploaded_at', 1).to_list(50)
 
     async def bs_add_content(self, session_id, ctype, file_id, description=''):
         r = await self.basic_sci_content.insert_one({
-            'session_id': session_id,
-            'type': ctype,          # video | ppt | pdf | note | test | voice
-            'file_id': file_id,
-            'description': description,
-            'uploaded_at': datetime.now().isoformat(),
-            'downloads': 0
+            'session_id': session_id, 'type': ctype, 'file_id': file_id,
+            'description': description, 'uploaded_at': datetime.now().isoformat(), 'downloads': 0
         })
         return r.inserted_id
 
@@ -171,23 +157,115 @@ class DB:
 
     async def bs_inc_download(self, content_id, uid):
         try:
-            await self.basic_sci_content.update_one(
-                {'_id': ObjectId(content_id)}, {'$inc': {'downloads': 1}}
-            )
+            await self.basic_sci_content.update_one({'_id': ObjectId(content_id)}, {'$inc': {'downloads': 1}})
         except:
             pass
         await self.log(uid, 'bs_download', {'content_id': content_id})
 
+    # ───────────── رفرنس‌ها ─────────────
+    async def ref_get_subjects(self):
+        """همه درس‌های رفرنس"""
+        return await self.ref_subjects.find({}).sort('order', 1).to_list(100)
+
+    async def ref_add_subject(self, name):
+        existing = await self.ref_subjects.find_one({'name': name})
+        if existing:
+            return None
+        count = await self.ref_subjects.count_documents({})
+        r = await self.ref_subjects.insert_one({
+            'name': name, 'order': count, 'created_at': datetime.now().isoformat()
+        })
+        return r.inserted_id
+
+    async def ref_delete_subject(self, subject_id):
+        try:
+            oid = ObjectId(subject_id)
+            await self.ref_subjects.delete_one({'_id': oid})
+            books = await self.ref_books.find({'subject_id': subject_id}).to_list(100)
+            for b in books:
+                await self.ref_files.delete_many({'book_id': str(b['_id'])})
+            await self.ref_books.delete_many({'subject_id': subject_id})
+        except:
+            pass
+
+    async def ref_get_subject(self, subject_id):
+        try:
+            return await self.ref_subjects.find_one({'_id': ObjectId(subject_id)})
+        except:
+            return None
+
+    async def ref_get_books(self, subject_id):
+        """کتاب‌های یک درس"""
+        return await self.ref_books.find({'subject_id': subject_id}).sort('order', 1).to_list(50)
+
+    async def ref_add_book(self, subject_id, name):
+        count = await self.ref_books.count_documents({'subject_id': subject_id})
+        r = await self.ref_books.insert_one({
+            'subject_id': subject_id, 'name': name,
+            'order': count, 'created_at': datetime.now().isoformat()
+        })
+        return r.inserted_id
+
+    async def ref_delete_book(self, book_id):
+        try:
+            await self.ref_books.delete_one({'_id': ObjectId(book_id)})
+            await self.ref_files.delete_many({'book_id': book_id})
+        except:
+            pass
+
+    async def ref_get_book(self, book_id):
+        try:
+            return await self.ref_books.find_one({'_id': ObjectId(book_id)})
+        except:
+            return None
+
+    async def ref_get_files(self, book_id):
+        """فایل‌های یک کتاب (فارسی/لاتین)"""
+        return await self.ref_files.find({'book_id': book_id}).to_list(10)
+
+    async def ref_add_file(self, book_id, lang, file_id):
+        """lang: 'fa' یا 'en'"""
+        # اگه قبلاً این زبان بود، آپدیت کن
+        existing = await self.ref_files.find_one({'book_id': book_id, 'lang': lang})
+        if existing:
+            await self.ref_files.update_one(
+                {'_id': existing['_id']}, {'$set': {'file_id': file_id, 'uploaded_at': datetime.now().isoformat()}}
+            )
+            return str(existing['_id'])
+        r = await self.ref_files.insert_one({
+            'book_id': book_id, 'lang': lang, 'file_id': file_id,
+            'uploaded_at': datetime.now().isoformat(), 'downloads': 0
+        })
+        return str(r.inserted_id)
+
+    async def ref_get_file(self, file_id):
+        try:
+            return await self.ref_files.find_one({'_id': ObjectId(file_id)})
+        except:
+            return None
+
+    async def ref_inc_download(self, file_id, uid):
+        try:
+            await self.ref_files.update_one({'_id': ObjectId(file_id)}, {'$inc': {'downloads': 1}})
+        except:
+            pass
+        await self.log(uid, 'ref_download', {'file_id': file_id})
+
+    async def ref_delete_file(self, file_id):
+        try:
+            await self.ref_files.delete_one({'_id': ObjectId(file_id)})
+        except:
+            pass
+
     # ───────────── FAQ ─────────────
     async def faq_get_all(self):
-        return await self.faq.find({}).sort('order', 1).to_list(50)
+        return await self.faq.find({}).sort('order', 1).to_list(100)
 
     async def faq_add(self, question, answer, category='عمومی'):
         count = await self.faq.count_documents({})
         await self.faq.insert_one({
-            'question': question, 'answer': answer,
-            'category': category, 'order': count,
-            'created_at': datetime.now().isoformat()
+            'question': question, 'answer': answer, 'category': category,
+            'order': count, 'created_at': datetime.now().isoformat()
         })
 
     async def faq_delete(self, fid):
@@ -198,14 +276,13 @@ class DB:
 
     async def faq_get_categories(self):
         docs = await self.faq.distinct('category')
-        return docs if docs else ['عمومی']
+        return docs if docs else []
 
     # ───────────── QBANK FILES ─────────────
     async def add_qbank_file(self, lesson, topic, file_id, description, file_type='document'):
         r = await self.qbank_files.insert_one({
-            'lesson': lesson, 'topic': topic,
-            'file_id': file_id, 'file_type': file_type,
-            'description': description,
+            'lesson': lesson, 'topic': topic, 'file_id': file_id,
+            'file_type': file_type, 'description': description,
             'upload_date': datetime.now().isoformat(), 'downloads': 0
         })
         return r.inserted_id
@@ -239,11 +316,9 @@ class DB:
     async def add_question(self, lesson, topic, difficulty, question, options, correct, explanation, creator, auto_approve=False):
         r = await self.questions.insert_one({
             'lesson': lesson, 'topic': topic, 'difficulty': difficulty,
-            'question': question, 'options': options,
-            'correct_answer': correct, 'explanation': explanation,
-            'creator_id': creator, 'approved': auto_approve,
-            'created_at': datetime.now().isoformat(),
-            'attempt_count': 0, 'correct_count': 0
+            'question': question, 'options': options, 'correct_answer': correct,
+            'explanation': explanation, 'creator_id': creator, 'approved': auto_approve,
+            'created_at': datetime.now().isoformat(), 'attempt_count': 0, 'correct_count': 0
         })
         return r.inserted_id
 
@@ -264,9 +339,7 @@ class DB:
         weak = user.get('weak_topics', []) if user else []
         if not weak:
             return await self.get_questions(limit=limit)
-        return await self.questions.find(
-            {'approved': True, 'topic': {'$in': weak}}
-        ).limit(limit).to_list(limit)
+        return await self.questions.find({'approved': True, 'topic': {'$in': weak}}).limit(limit).to_list(limit)
 
     async def pending_questions(self):
         return await self.questions.find({'approved': False}).to_list(50)
@@ -285,9 +358,8 @@ class DB:
 
     async def save_answer(self, uid, qid, selected, is_correct):
         await self.answers.insert_one({
-            'user_id': uid, 'question_id': qid,
-            'selected': selected, 'is_correct': is_correct,
-            'answered_at': datetime.now().isoformat()
+            'user_id': uid, 'question_id': qid, 'selected': selected,
+            'is_correct': is_correct, 'answered_at': datetime.now().isoformat()
         })
         await self.users.update_one(
             {'user_id': uid},
@@ -304,10 +376,7 @@ class DB:
             try:
                 q = await self.questions.find_one({'_id': ObjectId(qid)})
                 if q:
-                    await self.users.update_one(
-                        {'user_id': uid},
-                        {'$addToSet': {'weak_topics': q['topic']}}
-                    )
+                    await self.users.update_one({'user_id': uid}, {'$addToSet': {'weak_topics': q['topic']}})
             except:
                 pass
         await self.log(uid, 'answer', {'qid': qid, 'correct': is_correct})
@@ -317,16 +386,14 @@ class DB:
         r = await self.schedules.insert_one({
             'type': stype, 'lesson': lesson, 'teacher': teacher,
             'date': date, 'time': time, 'location': location, 'notes': notes,
-            'created_at': datetime.now().isoformat(),
-            'notified_days': []
+            'created_at': datetime.now().isoformat(), 'notified_days': []
         })
         return r.inserted_id
 
     async def get_schedules(self, stype=None, upcoming=True):
         q = {}
         if stype: q['type'] = stype
-        if upcoming:
-            q['date'] = {'$gte': datetime.now().strftime('%Y-%m-%d')}
+        if upcoming: q['date'] = {'$gte': datetime.now().strftime('%Y-%m-%d')}
         return await self.schedules.find(q).sort('date', 1).to_list(100)
 
     async def delete_schedule(self, sid):
@@ -346,17 +413,13 @@ class DB:
         target_date = (datetime.now() + timedelta(days=remind_days)).strftime('%Y-%m-%d')
         key = f'd{remind_days}'
         return await self.schedules.find({
-            'type': 'exam', 'date': target_date,
-            'notified_days': {'$ne': key}
+            'type': 'exam', 'date': target_date, 'notified_days': {'$ne': key}
         }).to_list(50)
 
     async def mark_exam_notified(self, sid, remind_days):
         key = f'd{remind_days}'
         try:
-            await self.schedules.update_one(
-                {'_id': ObjectId(sid)},
-                {'$addToSet': {'notified_days': key}}
-            )
+            await self.schedules.update_one({'_id': ObjectId(sid)}, {'$addToSet': {'notified_days': key}})
         except:
             pass
 
@@ -368,11 +431,9 @@ class DB:
         })
 
     async def user_stats(self, uid):
-        downloads = await self.stats.count_documents({'user_id': uid, 'action': 'download'})
+        downloads = await self.stats.count_documents({'user_id': uid, 'action': {'$in': ['bs_download', 'ref_download']}})
         week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-        week_act = await self.stats.count_documents(
-            {'user_id': uid, 'timestamp': {'$gt': week_ago}}
-        )
+        week_act = await self.stats.count_documents({'user_id': uid, 'timestamp': {'$gt': week_ago}})
         user = await self.get_user(uid)
         total = user.get('total_answers', 0) if user else 0
         correct = user.get('correct_answers', 0) if user else 0
@@ -392,7 +453,8 @@ class DB:
             'qbank_files': await self.qbank_files.count_documents({}),
             'bs_lessons': await self.basic_sci_lessons.count_documents({}),
             'bs_sessions': await self.basic_sci_sessions.count_documents({}),
-            'bs_content': await self.basic_sci_content.count_documents({}),
+            'ref_subjects': await self.ref_subjects.count_documents({}),
+            'ref_books': await self.ref_books.count_documents({}),
         }
 
     async def weekly_activity(self, uid):
@@ -401,9 +463,7 @@ class DB:
             day = datetime.now() - timedelta(days=i)
             s = day.replace(hour=0, minute=0, second=0).isoformat()
             e = day.replace(hour=23, minute=59, second=59).isoformat()
-            count = await self.stats.count_documents(
-                {'user_id': uid, 'timestamp': {'$gte': s, '$lte': e}}
-            )
+            count = await self.stats.count_documents({'user_id': uid, 'timestamp': {'$gte': s, '$lte': e}})
             result.append((day.strftime('%m/%d'), count))
         return result
 
