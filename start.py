@@ -82,7 +82,10 @@ async def register_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_dashboard_msg(update, context):
-    from dashboard import build_dashboard_text, build_dashboard_keyboard
+    from dashboard import build_dashboard_text
     uid = update.effective_user.id
-    text, kb = await build_dashboard_text(uid)
-    await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=kb)
+    try:
+        text, kb = await build_dashboard_text(uid)
+        await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=kb)
+    except Exception as e:
+        logger.error(f"Dashboard error: {e}")
