@@ -8,7 +8,7 @@ from utils import main_keyboard, admin_keyboard
 logger = logging.getLogger(__name__)
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 BROADCAST = 5
-RESOURCE_TYPES = ['📄 جزوه', '📊 پاورپوینت', '📝 نکات', '🧠 خلاصه', '🧪 تست']
+RESOURCE_TYPES = ['📄 جزوه', '📊 پاورپوینت', '📝 نکات', '🧠 خلاصه', '🧪 تست', '🎙 ویس']
 TERMS = ['ترم ۱', 'ترم ۲', 'ترم ۳', 'ترم ۴', 'ترم ۵', 'ترم ۶', 'ترم ۷']
 
 
