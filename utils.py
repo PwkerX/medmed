@@ -1,4 +1,4 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 
 TERMS = ['ترم ۱', 'ترم ۲', 'ترم ۳', 'ترم ۴', 'ترم ۵']
 
@@ -21,32 +21,28 @@ NOTIF_LABELS = {
 
 def main_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("🩺 داشبورد"), KeyboardButton("🔬 علوم پایه")],
-        [KeyboardButton("🧪 بانک سوال"), KeyboardButton("❓ سوالات متداول")],
-        [KeyboardButton("📅 برنامه"), KeyboardButton("📊 آمار من")],
-        [KeyboardButton("🔔 اعلان‌ها"), KeyboardButton("🔍 جستجو")]
+        [KeyboardButton("🩺 داشبورد"),    KeyboardButton("📚 منابع")],
+        [KeyboardButton("🧪 بانک سوال"),  KeyboardButton("❓ سوالات متداول")],
+        [KeyboardButton("📅 برنامه"),      KeyboardButton("📊 آمار من")],
+        [KeyboardButton("🔔 اعلان‌ها"),    KeyboardButton("🔍 جستجو")]
     ], resize_keyboard=True)
 
 
 def content_admin_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("🩺 داشبورد"), KeyboardButton("🔬 علوم پایه")],
-        [KeyboardButton("🧪 بانک سوال"), KeyboardButton("❓ سوالات متداول")],
-        [KeyboardButton("📅 برنامه"), KeyboardButton("📊 آمار من")],
-        [KeyboardButton("🔔 اعلان‌ها"), KeyboardButton("🔍 جستجو")],
+        [KeyboardButton("🩺 داشبورد"),    KeyboardButton("📚 منابع")],
+        [KeyboardButton("🧪 بانک سوال"),  KeyboardButton("❓ سوالات متداول")],
+        [KeyboardButton("📅 برنامه"),      KeyboardButton("📊 آمار من")],
+        [KeyboardButton("🔔 اعلان‌ها"),    KeyboardButton("🔍 جستجو")],
         [KeyboardButton("🎓 پنل محتوا")]
     ], resize_keyboard=True)
 
 
 def admin_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("🩺 داشبورد"), KeyboardButton("🔬 علوم پایه")],
-        [KeyboardButton("🧪 بانک سوال"), KeyboardButton("❓ سوالات متداول")],
-        [KeyboardButton("📅 برنامه"), KeyboardButton("📊 آمار من")],
-        [KeyboardButton("🔔 اعلان‌ها"), KeyboardButton("🔍 جستجو")],
+        [KeyboardButton("🩺 داشبورد"),    KeyboardButton("📚 منابع")],
+        [KeyboardButton("🧪 بانک سوال"),  KeyboardButton("❓ سوالات متداول")],
+        [KeyboardButton("📅 برنامه"),      KeyboardButton("📊 آمار من")],
+        [KeyboardButton("🔔 اعلان‌ها"),    KeyboardButton("🔍 جستجو")],
         [KeyboardButton("👨‍⚕️ پنل ادمین"), KeyboardButton("🎓 پنل محتوا")]
     ], resize_keyboard=True)
-
-
-def back_btn(data):
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data=data)]])
