@@ -3,7 +3,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
 from database import db
-from utils import main_keyboard, admin_keyboard
+from utils import main_keyboard, admin_keyboard, content_admin_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,12 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
-    kb = admin_keyboard() if uid == ADMIN_ID else main_keyboard()
+    if uid == ADMIN_ID:
+        kb = admin_keyboard()
+    elif user.get('role') == 'content_admin':
+        kb = content_admin_keyboard()
+    else:
+        kb = main_keyboard()
     await update.message.reply_text(
         f"🩺 <b>خوش برگشتید {user.get('name','')} عزیز!</b>",
         parse_mode='HTML', reply_markup=kb
