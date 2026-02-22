@@ -85,14 +85,17 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == "🧪 بانک سوال":
         keyboard = [
-            [InlineKeyboardButton("📖 تمرین آزاد", callback_data='questions:free')],
-            [InlineKeyboardButton("⚡ تمرین نقاط ضعف", callback_data='questions:weak')],
-            [InlineKeyboardButton("📝 شبیه‌سازی امتحان", callback_data='questions:exam')],
-            [InlineKeyboardButton("🔴 سوالات سخت", callback_data='questions:hard')],
-            [InlineKeyboardButton("📊 آمار", callback_data='questions:stats')]
+            [InlineKeyboardButton("📁 بانک سوال ادمین (دانلود فایل)", callback_data='questions:file_bank')],
+            [InlineKeyboardButton("🧪 تمرین تستی", callback_data='questions:practice')],
+            [InlineKeyboardButton("✏️ طراحی سوال", callback_data='questions:create')],
+            [InlineKeyboardButton("📊 آمار تمرین من", callback_data='questions:stats')]
         ]
-        await update.message.reply_text("🧪 <b>بانک سوال</b>", parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(
+            "🧪 <b>بانک سوال</b>\n\n"
+            "📁 <b>بانک ادمین:</b> فایل PDF/عکس بانک سوال\n"
+            "🧪 <b>تمرین تستی:</b> سوالات چهارگزینه‌ای\n"
+            "✏️ <b>طراحی سوال:</b> سوال بسازید",
+            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif text == "📅 برنامه":
         keyboard = [
