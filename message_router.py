@@ -27,21 +27,19 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await admin_broadcast_handler(update, context)
 
     # ── حالت ساخت سوال (همه کاربران) ──
-    mode_all = context.user_data.get('mode', '')
-    if mode_all == 'creating_question':
+    if context.user_data.get('mode') == 'creating_question':
         from questions import handle_create_question_steps
         return await handle_create_question_steps(update, context)
 
     # ── حالت ادمین محتوا ──
-    ca_mode = context.user_data.get('ca_mode', '')
-    if ca_mode in ('add_lesson', 'add_session', 'waiting_description', 'add_faq'):
+    if context.user_data.get('ca_mode') in ('add_lesson', 'add_session', 'waiting_description',
+                                              'add_faq', 'add_ref_subject', 'add_ref_book'):
         if await db.is_content_admin(uid):
             from content_admin import ca_text_handler
             return await ca_text_handler(update, context)
 
     # ── جستجو ──
-    awaiting = context.user_data.get('awaiting_search', False)
-    if awaiting:
+    if context.user_data.get('awaiting_search'):
         from search import search_handler
         return await search_handler(update, context)
 
@@ -50,29 +48,27 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         await update.message.reply_text("لطفاً /start را بزنید.")
         return
-
     if not user.get('approved') and uid != ADMIN_ID:
         await update.message.reply_text("⏳ دسترسی شما هنوز تأیید نشده است.")
         return
 
-    # ── مسیریابی کیبورد ──
+    # ════════ مسیریابی کیبورد ════════
+
     if text == "🩺 داشبورد":
         from dashboard import build_dashboard_text
         t, kb = await build_dashboard_text(uid)
         await update.message.reply_text(t, parse_mode='HTML', reply_markup=kb)
 
-    elif text == "🔬 علوم پایه":
-        keyboard = []
-        terms = ['ترم ۱', 'ترم ۲', 'ترم ۳', 'ترم ۴', 'ترم ۵']
-        for i in range(0, len(terms), 2):
-            row = [InlineKeyboardButton(f"📘 {terms[i]}", callback_data=f'bs:term:{i}')]
-            if i + 1 < len(terms):
-                row.append(InlineKeyboardButton(f"📘 {terms[i+1]}", callback_data=f'bs:term:{i+1}'))
-            keyboard.append(row)
+    elif text == "📚 منابع":
+        keyboard = [
+            [InlineKeyboardButton("🔬 علوم پایه", callback_data='resources:bs')],
+            [InlineKeyboardButton("📖 رفرنس‌ها", callback_data='resources:ref')],
+        ]
         await update.message.reply_text(
-            "🔬 <b>علوم پایه پزشکی</b>\n\n"
+            "📚 <b>منابع درسی</b>\n\n"
             "━━━━━━━━━━━━━━━━\n"
-            "ترم تحصیلی خود را انتخاب کنید:",
+            "🔬 <b>علوم پایه:</b> محتوای جلسات (ویدیو، جزوه، پاورپوینت و...)\n"
+            "📖 <b>رفرنس‌ها:</b> کتاب‌های مرجع درسی (PDF فارسی/لاتین)",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -92,13 +88,18 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif text == "❓ سوالات متداول":
-        cats = await db.faq_get_categories()
-        keyboard = [[InlineKeyboardButton(f"📂 {c}", callback_data=f'faq:cat:{c}')] for c in cats]
-        keyboard.append([InlineKeyboardButton("📋 همه سوالات", callback_data='faq:cat:همه')])
+        keyboard = [
+            [InlineKeyboardButton("🔬 علوم پایه", callback_data='faq:cat:0')],
+            [InlineKeyboardButton("📚 رفرنس‌ها", callback_data='faq:cat:1')],
+            [InlineKeyboardButton("🧪 بانک سوال", callback_data='faq:cat:2')],
+            [InlineKeyboardButton("📅 برنامه و امتحانات", callback_data='faq:cat:3')],
+            [InlineKeyboardButton("👤 حساب کاربری", callback_data='faq:cat:4')],
+            [InlineKeyboardButton("⚙️ مشکلات فنی", callback_data='faq:cat:5')],
+        ]
         await update.message.reply_text(
             "❓ <b>سوالات متداول</b>\n\n"
             "━━━━━━━━━━━━━━━━\n"
-            "دسته‌بندی مورد نظر را انتخاب کنید:",
+            "در کدام بخش سوال دارید؟",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -138,44 +139,43 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif text == "🔍 جستجو":
-        context.user_data['search_mode'] = 'bs'
+        context.user_data['search_mode'] = 'resources'
         context.user_data['awaiting_search'] = True
         await update.message.reply_text("🔍 کلمه کلیدی را وارد کنید:")
         return SEARCH
 
     elif text == "👨‍⚕️ پنل ادمین" and uid == ADMIN_ID:
-        await _show_admin_panel(update, uid)
+        await _show_admin_panel(update)
 
-    elif text == "🎓 پنل محتوا" and await db.is_content_admin(uid):
-        keyboard = [
-            [InlineKeyboardButton("📘 مدیریت درس‌های ترم", callback_data='ca:terms')],
-            [InlineKeyboardButton("❓ مدیریت سوالات متداول", callback_data='ca:faq')],
-        ]
-        await update.message.reply_text(
-            "🎓 <b>پنل ادمین محتوا</b>\n\n"
-            "از این پنل می‌توانید محتوای علوم پایه را مدیریت کنید:",
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+    elif text == "🎓 پنل محتوا":
+        if await db.is_content_admin(uid):
+            keyboard = [
+                [InlineKeyboardButton("📘 مدیریت درس‌های علوم پایه", callback_data='ca:terms')],
+                [InlineKeyboardButton("📚 مدیریت رفرنس‌ها", callback_data='ca:refs')],
+                [InlineKeyboardButton("❓ مدیریت سوالات متداول", callback_data='ca:faq')],
+            ]
+            await update.message.reply_text(
+                "🎓 <b>پنل ادمین محتوا</b>\n\nچه بخشی را مدیریت می‌کنید؟",
+                parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+            )
 
 
-async def _show_admin_panel(update, uid):
+async def _show_admin_panel(update):
     keyboard = [
         [InlineKeyboardButton("📊 آمار سیستم", callback_data='admin:stats')],
         [InlineKeyboardButton("👥 مدیریت کاربران", callback_data='admin:users'),
          InlineKeyboardButton("⏳ تأیید", callback_data='admin:pending')],
-        [InlineKeyboardButton("🎓 مدیریت ادمین محتوا", callback_data='admin:content_admins')],
-        [InlineKeyboardButton("📘 مدیریت درس‌های ترم", callback_data='ca:terms')],
+        [InlineKeyboardButton("🎓 ادمین‌های محتوا", callback_data='admin:content_admins')],
+        [InlineKeyboardButton("📘 مدیریت علوم پایه", callback_data='ca:terms'),
+         InlineKeyboardButton("📚 مدیریت رفرنس‌ها", callback_data='ca:refs')],
         [InlineKeyboardButton("❓ مدیریت FAQ", callback_data='ca:faq')],
-        [InlineKeyboardButton("🧪 بانک سوال", callback_data='admin:qbank_manage')],
+        [InlineKeyboardButton("🧪 مدیریت بانک سوال", callback_data='admin:qbank_manage')],
         [InlineKeyboardButton("➕ سوال جدید", callback_data='admin:add_question'),
          InlineKeyboardButton("⏳ تأیید سوالات", callback_data='admin:pending_q')],
         [InlineKeyboardButton("📅 برنامه جدید", callback_data='admin:add_schedule')],
         [InlineKeyboardButton("📢 ارسال همگانی", callback_data='admin:broadcast')]
     ]
     await update.message.reply_text(
-        "👨‍⚕️ <b>پنل مدیریت</b>\n\n"
-        "به پنل ادمین خوش آمدید:",
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        "👨‍⚕️ <b>پنل مدیریت</b>",
+        parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
     )
