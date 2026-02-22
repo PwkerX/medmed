@@ -28,7 +28,7 @@ async def basic_science_callback(update: Update, context: ContextTypes.DEFAULT_T
     parts = data.split(':')
     action = parts[1] if len(parts) > 1 else 'main'
 
-    if action == 'main':
+    if action == 'main' or data == 'resources:bs':
         await _show_terms(query)
 
     elif action == 'term':
