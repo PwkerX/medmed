@@ -3,11 +3,13 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from database import db
-from utils import TERMS, LESSONS, TOPICS, RESOURCE_TYPES, main_keyboard
+from utils import main_keyboard, admin_keyboard
 
 logger = logging.getLogger(__name__)
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 BROADCAST = 5
+RESOURCE_TYPES = ['📄 جزوه', '📊 پاورپوینت', '📝 نکات', '🧠 خلاصه', '🧪 تست']
+TERMS = ['ترم ۱', 'ترم ۲', 'ترم ۳', 'ترم ۴', 'ترم ۵', 'ترم ۶', 'ترم ۷']
 
 
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -23,99 +25,193 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = data.split(':')
     action = parts[1] if len(parts) > 1 else 'main'
 
+    # ─── MAIN MENU ───
     if action == 'main':
         await _admin_menu(query)
 
+    # ─── STATS ───
     elif action == 'stats':
         s = await db.global_stats()
-        top = await db.resources.find().sort('metadata.downloads', -1).limit(3).to_list(3)
         text = (
             "📊 <b>آمار سیستم</b>\n━━━━━━━━━━━━━━\n\n"
-            f"👥 کاربران: <b>{s['users']}</b>\n"
+            f"👥 کاربران تأیید شده: <b>{s['users']}</b>\n"
+            f"⏳ در انتظار تأیید: <b>{s['pending']}</b>\n"
             f"📚 منابع: <b>{s['resources']}</b>\n"
             f"🎥 ویدیوها: <b>{s['videos']}</b>\n"
             f"🧪 سوالات: <b>{s['questions']}</b>\n"
-            f"📥 دانلودها: <b>{s['downloads']}</b>\n\n"
-            "🔥 <b>پرطرفدارترین:</b>\n"
+            f"📥 دانلودها: <b>{s['downloads']}</b>"
         )
-        for i, r in enumerate(top, 1):
-            text += f"{i}. {r.get('lesson','')} — {r.get('topic','')} | ⬇️{r['metadata'].get('downloads',0)}\n"
         await query.edit_message_text(text, parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 بروزرسانی", callback_data='admin:stats')],
                 [InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')]
             ]))
 
+    # ─── USER LIST ───
     elif action == 'users':
-        users = await db.all_users(approved_only=False)
-        approved = sum(1 for u in users if u.get('approved'))
-        text = f"👥 <b>کاربران</b>\n✅ تأیید شده: {approved} | ⏳ در انتظار: {len(users)-approved}\n\n"
-        for u in users[:20]:
-            icon = "✅" if u.get('approved') else "⏳"
-            text += f"{icon} {u.get('name','')} | {u.get('student_id','')} | گروه {u.get('group','')}\n"
-        keyboard = [
-            [InlineKeyboardButton("⏳ تأیید کاربران", callback_data='admin:pending')],
-            [InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')]
-        ]
-        await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+        await _show_users_list(query, page=int(parts[2]) if len(parts) > 2 else 0)
 
-    elif action == 'pending':
-        pending = await db.pending_users()
-        if not pending:
-            await query.edit_message_text("✅ هیچ کاربر در انتظاری نیست.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')]]))
+    # ─── USER DETAIL ───
+    elif action == 'user_detail':
+        target_uid = int(parts[2])
+        user = await db.get_user(target_uid)
+        if not user:
+            await query.answer("کاربر پیدا نشد!", show_alert=True)
             return
-        text = f"⏳ <b>در انتظار تأیید: {len(pending)}</b>\n\n"
-        keyboard = []
-        for u in pending[:8]:
-            uid2 = u['user_id']
-            text += f"👤 {u.get('name','')} | {u.get('student_id','')} | @{u.get('username','ندارد')}\n"
-            keyboard.append([
-                InlineKeyboardButton(f"✅ {u.get('name','')[:15]}", callback_data=f'admin:approve:{uid2}'),
-                InlineKeyboardButton("❌ رد", callback_data=f'admin:reject:{uid2}')
-            ])
-        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')])
+        stats = await db.user_stats(target_uid)
+        status = "✅ تأیید شده" if user.get('approved') else "⏳ در انتظار"
+        text = (
+            f"👤 <b>پروفایل کاربر</b>\n━━━━━━━━━━━━━━\n\n"
+            f"📛 نام: <b>{user.get('name','')}</b>\n"
+            f"🎓 شماره دانشجویی: <b>{user.get('student_id','')}</b>\n"
+            f"👥 گروه: <b>{user.get('group','')}</b>\n"
+            f"📱 یوزرنیم: @{user.get('username','ندارد')}\n"
+            f"📅 ثبت‌نام: {user.get('registered_at','')[:10]}\n"
+            f"🔘 وضعیت: {status}\n\n"
+            f"📊 <b>آمار:</b>\n"
+            f"📥 دانلود: {stats['downloads']} | 🧪 سوال: {stats['total_answers']} | ✅ صحیح: {stats['correct_answers']}"
+        )
+        keyboard = [
+            [InlineKeyboardButton("✏️ ویرایش نام", callback_data=f'admin:edit_name:{target_uid}'),
+             InlineKeyboardButton("✏️ ویرایش گروه", callback_data=f'admin:edit_group:{target_uid}')],
+            [InlineKeyboardButton("✏️ ویرایش شماره", callback_data=f'admin:edit_sid:{target_uid}')],
+        ]
+        if user.get('approved'):
+            keyboard.append([InlineKeyboardButton("🚫 تعلیق کاربر", callback_data=f'admin:suspend:{target_uid}')])
+        else:
+            keyboard.append([InlineKeyboardButton("✅ تأیید", callback_data=f'admin:approve:{target_uid}'),
+                              InlineKeyboardButton("❌ رد", callback_data=f'admin:reject:{target_uid}')])
+        keyboard.append([InlineKeyboardButton("🗑 حذف کامل کاربر", callback_data=f'admin:confirm_delete_user:{target_uid}')])
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:users')])
         await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
+    # ─── EDIT USER FIELDS ───
+    elif action in ('edit_name', 'edit_group', 'edit_sid'):
+        target_uid = int(parts[2])
+        field_map = {'edit_name': ('name', 'نام'), 'edit_group': ('group', 'گروه'), 'edit_sid': ('student_id', 'شماره دانشجویی')}
+        field, label = field_map[action]
+        context.user_data['edit_user'] = {'uid': target_uid, 'field': field, 'label': label}
+        context.user_data['mode'] = 'edit_user'
+        await query.edit_message_text(
+            f"✏️ <b>ویرایش {label}</b>\n\nمقدار جدید را وارد کنید:",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data=f'admin:user_detail:{target_uid}')]]))
+
+    # ─── SUSPEND USER ───
+    elif action == 'suspend':
+        target_uid = int(parts[2])
+        await db.update_user(target_uid, {'approved': False})
+        try:
+            await context.bot.send_message(target_uid, "⚠️ دسترسی شما موقتاً تعلیق شد.")
+        except:
+            pass
+        await query.answer("🚫 کاربر تعلیق شد!", show_alert=True)
+        await _show_users_list(query, 0)
+
+    # ─── CONFIRM DELETE USER ───
+    elif action == 'confirm_delete_user':
+        target_uid = int(parts[2])
+        user = await db.get_user(target_uid)
+        name = user.get('name', '') if user else ''
+        keyboard = [
+            [InlineKeyboardButton("⚠️ بله، حذف کن", callback_data=f'admin:delete_user:{target_uid}')],
+            [InlineKeyboardButton("❌ لغو", callback_data=f'admin:user_detail:{target_uid}')]
+        ]
+        await query.edit_message_text(
+            f"⚠️ <b>حذف کاربر</b>\n\nآیا مطمئنی می‌خواهی <b>{name}</b> را کاملاً حذف کنی؟\nاین عمل قابل بازگشت نیست!",
+            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    # ─── DELETE USER ───
+    elif action == 'delete_user':
+        target_uid = int(parts[2])
+        user = await db.get_user(target_uid)
+        name = user.get('name', '') if user else ''
+        await db.delete_user(target_uid)
+        try:
+            await context.bot.send_message(target_uid, "❌ حساب شما حذف شد.")
+        except:
+            pass
+        await query.answer(f"🗑 {name} حذف شد!", show_alert=True)
+        await _show_users_list(query, 0)
+
+    # ─── PENDING USERS ───
+    elif action == 'pending':
+        await _show_pending(query)
+
+    # ─── APPROVE USER ───
     elif action == 'approve':
         target_uid = int(parts[2])
         user = await db.get_user(target_uid)
         await db.update_user(target_uid, {'approved': True})
         try:
             await context.bot.send_message(target_uid,
-                "✅ <b>دسترسی شما تأیید شد!</b>\n\nاکنون می‌توانید از ربات استفاده کنید.",
+                "✅ <b>دسترسی شما تأیید شد!</b>\nمی‌توانید از ربات استفاده کنید.",
                 parse_mode='HTML', reply_markup=main_keyboard())
-        except: pass
-        await query.answer(f"✅ {user.get('name','') if user else ''} تأیید شد!", show_alert=True)
-        # رفرش لیست
-        pending = await db.pending_users()
-        if pending:
-            from admin import admin_callback as ac
-            query.data = 'admin:pending'
-            await admin_callback(update, context)
-        else:
-            await query.edit_message_text("✅ همه کاربران تأیید شدند.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')]]))
+        except:
+            pass
+        await query.answer(f"✅ تأیید شد!", show_alert=True)
+        await _show_pending(query)
 
+    # ─── REJECT USER ───
     elif action == 'reject':
         target_uid = int(parts[2])
-        await db.users.delete_one({'user_id': target_uid})
+        await db.delete_user(target_uid)
         try:
             await context.bot.send_message(target_uid, "❌ درخواست شما رد شد.")
-        except: pass
+        except:
+            pass
         await query.answer("❌ رد شد.", show_alert=True)
-        query.data = 'admin:pending'
-        await admin_callback(update, context)
+        await _show_pending(query)
 
+    # ─── LESSON MANAGEMENT ───
+    elif action == 'manage_lessons':
+        await _show_lesson_management(query)
+
+    elif action == 'add_lesson_prompt':
+        context.user_data['mode'] = 'add_lesson'
+        await query.edit_message_text(
+            "➕ <b>افزودن درس جدید</b>\n\nنام درس را بنویسید:",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data='admin:manage_lessons')]]))
+
+    elif action == 'del_lesson':
+        lesson = ':'.join(parts[2:])
+        await db.delete_lesson(lesson)
+        await query.answer(f"🗑 {lesson} حذف شد!", show_alert=True)
+        await _show_lesson_management(query)
+
+    # ─── TOPIC MANAGEMENT ───
+    elif action == 'manage_topics':
+        lesson = ':'.join(parts[2:])
+        context.user_data['managing_lesson'] = lesson
+        await _show_topic_management(query, lesson)
+
+    elif action == 'add_topic_prompt':
+        lesson = ':'.join(parts[2:])
+        context.user_data['mode'] = 'add_topic'
+        context.user_data['managing_lesson'] = lesson
+        await query.edit_message_text(
+            f"➕ <b>افزودن مبحث به {lesson}</b>\n\nنام مبحث را بنویسید:",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data=f'admin:manage_topics:{lesson}')]]))
+
+    elif action == 'del_topic':
+        lesson = parts[2]
+        topic = ':'.join(parts[3:])
+        await db.delete_topic(lesson, topic)
+        await query.answer(f"🗑 {topic} حذف شد!", show_alert=True)
+        await _show_topic_management(query, lesson)
+
+    # ─── UPLOAD RESOURCE ───
     elif action == 'upload_resource':
         context.user_data['upload_mode'] = 'resource'
         context.user_data['upload_path'] = {}
-        await _select_term(query, 'resource')
+        await _select_term(query)
 
     elif action == 'upload_video':
         context.user_data['upload_mode'] = 'video'
         context.user_data['upload_path'] = {}
-        await _select_lesson_for_video(query)
+        await _select_lesson_dynamic(query, 'admin:upload_video')
 
     elif action == 'set_mode':
         mode = parts[2]
@@ -125,23 +221,20 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if file_id:
             context.user_data['upload_file_id'] = file_id
         if mode == 'resource':
-            await _select_term(query, mode)
+            await _select_term(query)
         else:
-            await _select_lesson_for_video(query)
+            await _select_lesson_dynamic(query, 'admin:main')
 
     elif action == 'sel_term':
         term = ':'.join(parts[2:])
         context.user_data.setdefault('upload_path', {})['term'] = term
-        await _select_lesson(query, term)
+        await _select_lesson_dynamic(query, f'admin:sel_term:{term}')
 
     elif action == 'sel_lesson':
         lesson = ':'.join(parts[2:])
         context.user_data.setdefault('upload_path', {})['lesson'] = lesson
         mode = context.user_data.get('upload_mode', 'resource')
-        if mode == 'video':
-            await _select_topic(query, lesson, mode)
-        else:
-            await _select_topic(query, lesson, mode)
+        await _select_topic_dynamic(query, lesson, mode)
 
     elif action == 'sel_topic':
         topic = ':'.join(parts[2:])
@@ -157,6 +250,20 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.setdefault('upload_path', {})['type'] = rtype
         await _finalize_path(query, context)
 
+    # ─── DELETE CONTENT ───
+    elif action == 'del_resource':
+        rid = parts[2]
+        await db.delete_resource(rid)
+        await query.answer("🗑 منبع حذف شد!", show_alert=True)
+        await _admin_menu(query)
+
+    elif action == 'del_video':
+        vid = parts[2]
+        await db.delete_video(vid)
+        await query.answer("🗑 ویدیو حذف شد!", show_alert=True)
+        await _admin_menu(query)
+
+    # ─── QUESTIONS ───
     elif action == 'pending_q':
         await _pending_questions(query)
 
@@ -172,58 +279,92 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ سوال حذف شد.", show_alert=True)
         await _pending_questions(query)
 
+    elif action == 'add_question':
+        context.user_data['mode'] = 'add_question'
+        await query.edit_message_text(
+            "➕ <b>افزودن سوال</b>\n\nفرمت (با | جدا کنید):\n"
+            "<code>درس|مبحث|سختی|سوال|گزینه۱|گزینه۲|گزینه۳|گزینه۴|جواب(1-4)|توضیح</code>\n\n"
+            "سختی: <code>آسان 🟢</code> یا <code>متوسط 🟡</code> یا <code>سخت 🔴</code>",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data='admin:main')]]))
+
+    # ─── SCHEDULE ───
     elif action == 'add_schedule':
-        context.user_data['mode'] = 'add_schedule'
         keyboard = [
             [InlineKeyboardButton("📖 کلاس", callback_data='admin:schedule_type:class')],
             [InlineKeyboardButton("📝 امتحان", callback_data='admin:schedule_type:exam')],
             [InlineKeyboardButton("🔄 جبرانی", callback_data='admin:schedule_type:makeup')],
             [InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')]
         ]
-        await query.edit_message_text("📅 نوع برنامه را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("📅 نوع برنامه:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif action == 'schedule_type':
         stype = parts[2]
         context.user_data['schedule_type'] = stype
         context.user_data['mode'] = 'add_schedule'
         await query.edit_message_text(
-            f"📅 <b>افزودن برنامه جدید</b>\n\n"
-            "فرمت:\n<code>درس, استاد, تاریخ(YYYY-MM-DD), ساعت(HH:MM), مکان, توضیحات(اختیاری)</code>\n\n"
-            "مثال:\n<code>آناتومی, دکتر محمدی, 2024-03-20, 09:00, کلاس A2</code>",
+            "📅 <b>برنامه جدید</b>\n\n"
+            "<code>درس, استاد, تاریخ(YYYY-MM-DD), ساعت(HH:MM), مکان, توضیحات(اختیاری)</code>\n\n"
+            "مثال: <code>آناتومی, دکتر محمدی, 2024-03-20, 09:00, کلاس A2</code>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data='admin:main')]]))
 
+    # ─── BROADCAST ───
     elif action == 'broadcast':
         context.user_data['mode'] = 'broadcast'
         await query.edit_message_text(
-            "📢 <b>ارسال پیام همگانی</b>\n\nپیام را بنویسید:",
+            "📢 <b>ارسال همگانی</b>\n\nپیام را بنویسید:",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data='admin:main')]]))
         return BROADCAST
 
-    elif action == 'add_question':
-        context.user_data['mode'] = 'add_question'
-        await query.edit_message_text(
-            "➕ <b>افزودن سوال جدید</b>\n\n"
-            "فرمت (با | جدا کنید):\n"
-            "<code>درس|مبحث|سختی|سوال|گزینه۱|گزینه۲|گزینه۳|گزینه۴|جواب(1-4)|توضیح</code>\n\n"
-            "سختی: <code>آسان 🟢</code> یا <code>متوسط 🟡</code> یا <code>سخت 🔴</code>\n\n"
-            "مثال:\n"
-            "<code>آناتومی|اندام فوقانی|متوسط 🟡|عصب مدیان از کجا عبور می‌کند?|تونل کارپال|آرنج|مچ|ساعد|1|از تونل کارپال عبور می‌کند</code>",
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data='admin:main')]]))
+    # ─── LIST CONTENT FOR DELETE ───
+    elif action == 'list_resources':
+        resources = await db.get_resources()
+        if not resources:
+            await query.edit_message_text("❌ منبعی ثبت نشده.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')]]))
+            return
+        keyboard = []
+        for r in resources[:10]:
+            rid = str(r['_id'])
+            label = f"🗑 {r.get('lesson','')} — {r.get('type','')} v{r['metadata'].get('version','1')}"
+            keyboard.append([InlineKeyboardButton(label, callback_data=f'admin:del_resource:{rid}')])
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')])
+        await query.edit_message_text("📚 <b>حذف منبع:</b>", parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard))
 
+    elif action == 'list_videos':
+        videos = await db.get_videos()
+        if not videos:
+            await query.edit_message_text("❌ ویدیویی ثبت نشده.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')]]))
+            return
+        keyboard = []
+        for v in videos[:10]:
+            vid = str(v['_id'])
+            label = f"🗑 {v.get('lesson','')} | {v.get('teacher','')} | {v.get('date','')}"
+            keyboard.append([InlineKeyboardButton(label, callback_data=f'admin:del_video:{vid}')])
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')])
+        await query.edit_message_text("🎥 <b>حذف ویدیو:</b>", parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+# ─────────── HELPER FUNCTIONS ───────────
 
 async def _admin_menu(query):
     keyboard = [
         [InlineKeyboardButton("📊 آمار سیستم", callback_data='admin:stats')],
-        [InlineKeyboardButton("👥 کاربران", callback_data='admin:users'),
+        [InlineKeyboardButton("👥 مدیریت کاربران", callback_data='admin:users'),
          InlineKeyboardButton("⏳ تأیید کاربران", callback_data='admin:pending')],
         [InlineKeyboardButton("📚 آپلود منبع", callback_data='admin:upload_resource'),
          InlineKeyboardButton("🎥 آپلود ویدیو", callback_data='admin:upload_video')],
+        [InlineKeyboardButton("🗑 حذف منبع", callback_data='admin:list_resources'),
+         InlineKeyboardButton("🗑 حذف ویدیو", callback_data='admin:list_videos')],
+        [InlineKeyboardButton("📝 مدیریت درس‌ها", callback_data='admin:manage_lessons')],
         [InlineKeyboardButton("➕ افزودن سوال", callback_data='admin:add_question'),
          InlineKeyboardButton("⏳ تأیید سوالات", callback_data='admin:pending_q')],
-        [InlineKeyboardButton("📅 افزودن برنامه", callback_data='admin:add_schedule')],
+        [InlineKeyboardButton("📅 برنامه جدید", callback_data='admin:add_schedule')],
         [InlineKeyboardButton("📢 ارسال همگانی", callback_data='admin:broadcast')]
     ]
     await query.edit_message_text(
@@ -232,9 +373,83 @@ async def _admin_menu(query):
     )
 
 
-async def _select_term(query, mode):
+async def _show_users_list(query, page=0):
+    all_users = await db.all_users(approved_only=False)
+    per_page = 8
+    start = page * per_page
+    chunk = all_users[start:start + per_page]
+    total = len(all_users)
+    approved = sum(1 for u in all_users if u.get('approved'))
+
+    text = f"👥 <b>کاربران</b>\n✅ تأیید: {approved} | ⏳ در انتظار: {total-approved} | مجموع: {total}\n\n"
     keyboard = []
-    from utils import TERMS
+    for u in chunk:
+        icon = "✅" if u.get('approved') else "⏳"
+        label = f"{icon} {u.get('name','')[:15]} | {u.get('student_id','')} | گروه {u.get('group','')}"
+        keyboard.append([InlineKeyboardButton(label, callback_data=f'admin:user_detail:{u["user_id"]}')])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ قبلی", callback_data=f'admin:users:{page-1}'))
+    if start + per_page < total:
+        nav.append(InlineKeyboardButton("بعدی ▶️", callback_data=f'admin:users:{page+1}'))
+    if nav:
+        keyboard.append(nav)
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')])
+
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def _show_pending(query):
+    pending = await db.pending_users()
+    if not pending:
+        await query.edit_message_text("✅ هیچ کاربر در انتظاری نیست.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')]]))
+        return
+    text = f"⏳ <b>در انتظار تأیید: {len(pending)}</b>\n\n"
+    keyboard = []
+    for u in pending[:8]:
+        uid2 = u['user_id']
+        text += f"👤 {u.get('name','')} | {u.get('student_id','')} | گروه {u.get('group','')} | @{u.get('username','ندارد')}\n"
+        keyboard.append([
+            InlineKeyboardButton(f"✅ {u.get('name','')[:12]}", callback_data=f'admin:approve:{uid2}'),
+            InlineKeyboardButton("👁 جزئیات", callback_data=f'admin:user_detail:{uid2}'),
+            InlineKeyboardButton("❌ رد", callback_data=f'admin:reject:{uid2}')
+        ])
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')])
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def _show_lesson_management(query):
+    lessons = await db.get_lessons()
+    text = f"📝 <b>مدیریت درس‌ها</b>\n{len(lessons)} درس ثبت شده\n\n"
+    keyboard = []
+    for l in lessons:
+        keyboard.append([
+            InlineKeyboardButton(f"📚 {l}", callback_data=f'admin:manage_topics:{l}'[:64]),
+            InlineKeyboardButton("🗑", callback_data=f'admin:del_lesson:{l}'[:64])
+        ])
+    keyboard.append([InlineKeyboardButton("➕ درس جدید", callback_data='admin:add_lesson_prompt')])
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')])
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def _show_topic_management(query, lesson):
+    topics = await db.get_topics(lesson)
+    text = f"📂 <b>مباحث {lesson}</b>\n{len(topics)} مبحث\n\n"
+    keyboard = []
+    for t in topics:
+        keyboard.append([
+            InlineKeyboardButton(f"📌 {t}", callback_data=f'admin:manage_topics:{lesson}'[:64]),
+            InlineKeyboardButton("🗑", callback_data=f'admin:del_topic:{lesson}:{t}'[:64])
+        ])
+    keyboard.append([InlineKeyboardButton("➕ مبحث جدید", callback_data=f'admin:add_topic_prompt:{lesson}'[:64])])
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:manage_lessons')])
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def _select_term(query):
+    keyboard = []
     for i in range(0, len(TERMS), 2):
         row = [InlineKeyboardButton(TERMS[i], callback_data=f'admin:sel_term:{TERMS[i]}'[:64])]
         if i + 1 < len(TERMS):
@@ -244,59 +459,47 @@ async def _select_term(query, mode):
     await query.edit_message_text("📚 ترم را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def _select_lesson(query, term):
+async def _select_lesson_dynamic(query, back):
+    lessons = await db.get_lessons()
     keyboard = []
-    for i in range(0, len(LESSONS), 2):
-        row = [InlineKeyboardButton(LESSONS[i], callback_data=f'admin:sel_lesson:{LESSONS[i]}'[:64])]
-        if i + 1 < len(LESSONS):
-            row.append(InlineKeyboardButton(LESSONS[i+1], callback_data=f'admin:sel_lesson:{LESSONS[i+1]}'[:64]))
-        keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:upload_resource')])
-    await query.edit_message_text(f"📚 {term}\nدرس را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-
-async def _select_lesson_for_video(query):
-    keyboard = []
-    for i in range(0, len(LESSONS), 2):
-        row = [InlineKeyboardButton(LESSONS[i], callback_data=f'admin:sel_lesson:{LESSONS[i]}'[:64])]
-        if i + 1 < len(LESSONS):
-            row.append(InlineKeyboardButton(LESSONS[i+1], callback_data=f'admin:sel_lesson:{LESSONS[i+1]}'[:64]))
+    for i in range(0, len(lessons), 2):
+        row = [InlineKeyboardButton(lessons[i], callback_data=f'admin:sel_lesson:{lessons[i]}'[:64])]
+        if i + 1 < len(lessons):
+            row.append(InlineKeyboardButton(lessons[i+1], callback_data=f'admin:sel_lesson:{lessons[i+1]}'[:64]))
         keyboard.append(row)
     keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')])
-    await query.edit_message_text("🎥 درس ویدیو را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text("📚 درس را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def _select_topic(query, lesson, mode):
-    topics = TOPICS.get(lesson, ['عمومی', 'پیشرفته'])
+async def _select_topic_dynamic(query, lesson, mode):
+    topics = await db.get_topics(lesson)
     keyboard = [[InlineKeyboardButton(t, callback_data=f'admin:sel_topic:{t}'[:64])] for t in topics]
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:upload_resource')])
-    await query.edit_message_text(f"📂 {lesson}\nمبحث را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')])
+    await query.edit_message_text(f"📂 <b>{lesson}</b>\nمبحث را انتخاب کنید:", parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def _select_type(query):
     keyboard = [[InlineKeyboardButton(rt, callback_data=f'admin:sel_type:{rt}'[:64])] for rt in RESOURCE_TYPES]
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:upload_resource')])
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:main')])
     await query.edit_message_text("📄 نوع فایل را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def _finalize_path(query, context):
     path = context.user_data.get('upload_path', {})
     mode = context.user_data.get('upload_mode', 'resource')
-    p_text = f"ترم: {path.get('term','')}\nدرس: {path.get('lesson','')}\nمبحث: {path.get('topic','')}"
+    p_text = f"درس: {path.get('lesson','')}\nمبحث: {path.get('topic','')}"
     if mode == 'resource':
-        p_text += f"\nنوع: {path.get('type','')}"
+        p_text = f"ترم: {path.get('term','')}\n" + p_text + f"\nنوع: {path.get('type','')}"
     has_file = bool(context.user_data.get('upload_file_id'))
     if has_file:
-        # فایل از قبل داریم، مستقیم متادیتا بخوا
         prompt = "متادیتا:\n`نسخه, تگ‌ها, اهمیت(1-5), توضیحات`" if mode == 'resource' else "متادیتا:\n`استاد, تاریخ(YYYY-MM-DD), توضیح`"
         await query.edit_message_text(
-            f"✅ <b>مسیر انتخاب شد:</b>\n{p_text}\n\n{prompt}",
-            parse_mode='HTML',
+            f"✅ <b>مسیر:</b>\n{p_text}\n\n{prompt}", parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data='admin:main')]]))
     else:
         await query.edit_message_text(
-            f"✅ <b>مسیر انتخاب شد:</b>\n{p_text}\n\n📤 <b>حالا فایل را ارسال کنید.</b>",
-            parse_mode='HTML',
+            f"✅ <b>مسیر:</b>\n{p_text}\n\n📤 <b>حالا فایل را ارسال کنید.</b>", parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data='admin:main')]]))
 
 
@@ -338,8 +541,49 @@ async def admin_broadcast_handler(update: Update, context: ContextTypes.DEFAULT_
             except:
                 failed += 1
 
-    await update.message.reply_text(
-        f"📢 ارسال تمام شد!\n✅ {sent} نفر\n❌ {failed} ناموفق"
-    )
+    await update.message.reply_text(f"📢 ارسال تمام!\n✅ {sent} نفر | ❌ {failed} ناموفق")
     context.user_data.pop('mode', None)
     return ConversationHandler.END
+
+
+async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """هندل کردن متن‌های ادمین برای ویرایش و افزودن"""
+    uid = update.effective_user.id
+    if uid != ADMIN_ID:
+        return False
+
+    mode = context.user_data.get('mode', '')
+    text = update.message.text.strip()
+
+    if mode == 'add_lesson':
+        ok = await db.add_lesson(text)
+        if ok:
+            await update.message.reply_text(f"✅ درس «{text}» اضافه شد!")
+        else:
+            await update.message.reply_text(f"❌ درس «{text}» قبلاً وجود دارد.")
+        context.user_data.pop('mode', None)
+        return True
+
+    elif mode == 'add_topic':
+        lesson = context.user_data.get('managing_lesson', '')
+        ok = await db.add_topic(lesson, text)
+        if ok:
+            await update.message.reply_text(f"✅ مبحث «{text}» به {lesson} اضافه شد!")
+        else:
+            await update.message.reply_text(f"❌ این مبحث قبلاً وجود دارد.")
+        context.user_data.pop('mode', None)
+        return True
+
+    elif mode == 'edit_user':
+        edit_info = context.user_data.get('edit_user', {})
+        target_uid = edit_info.get('uid')
+        field = edit_info.get('field')
+        label = edit_info.get('label')
+        if target_uid and field:
+            await db.update_user(target_uid, {field: text})
+            await update.message.reply_text(f"✅ {label} به «{text}» تغییر کرد.")
+        context.user_data.pop('mode', None)
+        context.user_data.pop('edit_user', None)
+        return True
+
+    return False
