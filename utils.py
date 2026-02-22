@@ -1,9 +1,15 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 
-TERMS = ['ترم ۱', 'ترم ۲', 'ترم ۳', 'ترم ۴', 'ترم ۵', 'ترم ۶', 'ترم ۷']
+TERMS = ['ترم ۱', 'ترم ۲', 'ترم ۳', 'ترم ۴', 'ترم ۵']
 
-RESOURCE_TYPES = ['📄 جزوه', '📊 پاورپوینت', '📝 نکات', '🧠 خلاصه', '🧪 تست', '🎙 ویس']
-DIFFICULTIES = ['آسان 🟢', 'متوسط 🟡', 'سخت 🔴']
+CONTENT_TYPES = [
+    ('video', '🎥 ویدیو کلاس'),
+    ('ppt', '📊 پاورپوینت'),
+    ('pdf', '📄 جزوه PDF'),
+    ('note', '📝 نکات'),
+    ('test', '🧪 تست'),
+    ('voice', '🎙 ویس استاد'),
+]
 
 NOTIF_LABELS = {
     'new_resources': '📚 منابع جدید',
@@ -15,27 +21,32 @@ NOTIF_LABELS = {
 
 def main_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("🩺 داشبورد"), KeyboardButton("📚 منابع")],
-        [KeyboardButton("🎥 آرشیو"), KeyboardButton("🧪 بانک سوال")],
+        [KeyboardButton("🩺 داشبورد"), KeyboardButton("🔬 علوم پایه")],
+        [KeyboardButton("🧪 بانک سوال"), KeyboardButton("❓ سوالات متداول")],
         [KeyboardButton("📅 برنامه"), KeyboardButton("📊 آمار من")],
         [KeyboardButton("🔔 اعلان‌ها"), KeyboardButton("🔍 جستجو")]
     ], resize_keyboard=True)
 
 
-def admin_keyboard():
+def content_admin_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("🩺 داشبورد"), KeyboardButton("📚 منابع")],
-        [KeyboardButton("🎥 آرشیو"), KeyboardButton("🧪 بانک سوال")],
+        [KeyboardButton("🩺 داشبورد"), KeyboardButton("🔬 علوم پایه")],
+        [KeyboardButton("🧪 بانک سوال"), KeyboardButton("❓ سوالات متداول")],
         [KeyboardButton("📅 برنامه"), KeyboardButton("📊 آمار من")],
         [KeyboardButton("🔔 اعلان‌ها"), KeyboardButton("🔍 جستجو")],
-        [KeyboardButton("👨‍⚕️ پنل ادمین")]
+        [KeyboardButton("🎓 پنل محتوا")]
+    ], resize_keyboard=True)
+
+
+def admin_keyboard():
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("🩺 داشبورد"), KeyboardButton("🔬 علوم پایه")],
+        [KeyboardButton("🧪 بانک سوال"), KeyboardButton("❓ سوالات متداول")],
+        [KeyboardButton("📅 برنامه"), KeyboardButton("📊 آمار من")],
+        [KeyboardButton("🔔 اعلان‌ها"), KeyboardButton("🔍 جستجو")],
+        [KeyboardButton("👨‍⚕️ پنل ادمین"), KeyboardButton("🎓 پنل محتوا")]
     ], resize_keyboard=True)
 
 
 def back_btn(data):
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 بازگشت", callback_data=data)]])
-
-
-def cb(prefix, *parts):
-    data = prefix + ':' + ':'.join(str(p) for p in parts)
-    return data[:64]
