@@ -141,9 +141,9 @@ async def step_student_id_handler(update: Update, context: ContextTypes.DEFAULT_
         )
         return STEP_STUDENT_ID
 
-    if len(sid) < 5 or len(sid) > 12:
+    if len(sid) != 16:
         await update.message.reply_text(
-            "⚠️ کد دانشجویی باید بین ۵ تا ۱۲ رقم باشد.\n\n🎓 مجدداً وارد کنید:"
+            "⚠️ کد دانشجویی باید دقیقاً ۱۶ رقم باشد.\n\n🎓 مجدداً وارد کنید:"
         )
         return STEP_STUDENT_ID
 
