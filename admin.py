@@ -264,6 +264,101 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _admin_menu(query)
 
     # ─── QUESTIONS ───
+    elif action == 'content_admins':
+        # لیست ادمین‌های محتوا
+        admins = await db.get_content_admins()
+        keyboard = []
+        for a in admins:
+            uid_a = a['user_id']
+            keyboard.append([
+                InlineKeyboardButton(f"🎓 {a.get('name','')} | {a.get('student_id','')}",
+                    callback_data=f'admin:ca_detail:{uid_a}'),
+                InlineKeyboardButton("❌ حذف دسترسی", callback_data=f'admin:ca_remove:{uid_a}')
+            ])
+        keyboard.append([InlineKeyboardButton("➕ دادن دسترسی به کاربر", callback_data='admin:ca_grant')])
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:stats')])
+        await query.edit_message_text(
+            f"🎓 <b>ادمین‌های محتوا</b> — {len(admins)} نفر\n\n"
+            "این افراد می‌توانند محتوای علوم پایه را مدیریت کنند:",
+            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif action == 'ca_grant':
+        # انتخاب کاربر برای دادن دسترسی
+        users = await db.all_users(approved_only=True)
+        keyboard = []
+        for u in users[:20]:
+            uid_u = u['user_id']
+            role = u.get('role','student')
+            if role == 'content_admin':
+                continue
+            keyboard.append([InlineKeyboardButton(
+                f"👤 {u.get('name','')} | گروه {u.get('group','')}",
+                callback_data=f'admin:ca_set:{uid_u}'
+            )])
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='admin:content_admins')])
+        await query.edit_message_text(
+            "➕ <b>دادن دسترسی ادمین محتوا</b>\n\nکاربر را انتخاب کنید:",
+            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif action == 'ca_set':
+        target_uid = int(parts[2])
+        await db.update_user(target_uid, {'role': 'content_admin'})
+        u = await db.get_user(target_uid)
+        name = u.get('name','') if u else ''
+        # ارسال کیبورد جدید به کاربر
+        from utils import content_admin_keyboard
+        try:
+            await context.bot.send_message(
+                target_uid,
+                "🎓 <b>دسترسی ادمین محتوا فعال شد!</b>\n\n"
+                "حالا می‌توانید محتوای علوم پایه را مدیریت کنید.\n"
+                "از دکمه «🎓 پنل محتوا» استفاده کنید.",
+                parse_mode='HTML',
+                reply_markup=content_admin_keyboard()
+            )
+        except:
+            pass
+        await query.edit_message_text(
+            f"✅ دسترسی ادمین محتوا به «{name}» داده شد.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 بازگشت", callback_data='admin:content_admins')
+            ]])
+        )
+
+    elif action == 'ca_remove':
+        target_uid = int(parts[2])
+        await db.update_user(target_uid, {'role': 'student'})
+        u = await db.get_user(target_uid)
+        name = u.get('name','') if u else ''
+        from utils import main_keyboard
+        try:
+            await context.bot.send_message(
+                target_uid,
+                "❌ دسترسی ادمین محتوای شما لغو شد.",
+                reply_markup=main_keyboard()
+            )
+        except:
+            pass
+        await query.edit_message_text(
+            f"✅ دسترسی «{name}» لغو شد.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 بازگشت", callback_data='admin:content_admins')
+            ]])
+        )
+
+    elif action == 'qbank_manage':
+        keyboard = [
+            [InlineKeyboardButton("📤 آپلود فایل بانک سوال", callback_data='admin:upload_qbank')],
+            [InlineKeyboardButton("🗑 حذف فایل‌های بانک سوال", callback_data='admin:list_qbank')],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data='admin:stats')]
+        ]
+        await query.edit_message_text(
+            "🧪 <b>مدیریت بانک سوال</b>",
+            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
     elif action == 'pending_q':
         await _pending_questions(query)
 
