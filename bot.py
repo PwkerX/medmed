@@ -20,7 +20,7 @@ from questions import (questions_callback, handle_question_answer, ANSWERING,
 from schedule import schedule_callback
 from stats import stats_callback
 from notifications import notifications_callback
-from admin import admin_callback, admin_broadcast_handler, BROADCAST
+from admin import admin_callback, admin_broadcast_handler, upload_file_handler, BROADCAST
 from search import search_handler, SEARCH
 from message_router import route_message
 from basic_science import basic_science_callback
@@ -119,6 +119,7 @@ def main():
     # ── ترتیب مهم است: specific اول، general بعد ──
     app.add_handler(CallbackQueryHandler(basic_science_callback, pattern='^bs[_:]'))
     app.add_handler(CallbackQueryHandler(references_callback,    pattern='^ref[_:]'))
+    app.add_handler(CallbackQueryHandler(route_resources,        pattern='^resources:menu'))
     app.add_handler(CallbackQueryHandler(dashboard_callback,     pattern='^dashboard'))
     app.add_handler(CallbackQueryHandler(questions_callback,     pattern='^(questions|answer:|download_qbank:)'))
     app.add_handler(CallbackQueryHandler(schedule_callback,      pattern='^schedule'))
@@ -153,7 +154,6 @@ def main():
 
 
 async def route_resources(update, context):
-    """هندلر ساده برای resources:main"""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     query = update.callback_query
     await query.answer()
