@@ -12,8 +12,8 @@ from telegram.ext import (
 )
 
 from start import (start_handler, register_start_callback,
-                   step_name_handler, step_student_id_handler,
-                   REGISTER, STEP_NAME, STEP_STUDENT_ID, STEP_GROUP)
+                   step_name_handler,
+                   REGISTER, STEP_NAME, STEP_GROUP)
 from dashboard import dashboard_callback
 from questions import (questions_callback, handle_question_answer, ANSWERING,
                        handle_create_question_steps, handle_difficulty_choice, CREATING_Q)
