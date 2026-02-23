@@ -30,7 +30,9 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── حالت ادمین محتوا ──
     if context.user_data.get('ca_mode') in ('add_lesson','add_session','waiting_description',
-                                              'add_faq','add_ref_subject','add_ref_book'):
+                                              'add_faq','add_ref_subject','add_ref_book',
+                                              'edit_lesson','edit_session',
+                                              'edit_ref_subject','edit_ref_book'):
         if await db.is_content_admin(uid):
             from content_admin import ca_text_handler
             return await ca_text_handler(update, context)
