@@ -233,7 +233,20 @@ class DB:
         return await self.tickets.find({'user_id': uid}).sort('created_at', -1).to_list(20)
 
     async def ticket_reply(self, ticket_id, reply):
-        await self.tickets.update_one({'ticket_id': ticket_id}, {'$set': {'reply': reply, 'status': 'closed', 'replied_at': datetime.now().isoformat()}})
+        await self.ticket_add_reply(ticket_id, reply)
+
+    async def ticket_add_reply(self, ticket_id, reply_text):
+        await self.tickets.update_one(
+            {'ticket_id': ticket_id},
+            {'$push': {'replies': {'text': reply_text, 'at': datetime.now().isoformat()}},
+             '$set': {'last_reply_at': datetime.now().isoformat()}}
+        )
+
+    async def ticket_close(self, ticket_id):
+        await self.tickets.update_one(
+            {'ticket_id': ticket_id},
+            {'$set': {'status': 'closed', 'closed_at': datetime.now().isoformat()}}
+        )
 
     async def ticket_get(self, ticket_id):
         return await self.tickets.find_one({'ticket_id': ticket_id})
@@ -312,15 +325,22 @@ class DB:
         if lesson: q['lesson'] = lesson
         return await self.questions.distinct('topic', q)
 
-    async def add_schedule(self, stype, lesson, teacher, date, time, location, notes=''):
-        r = await self.schedules.insert_one({'type': stype, 'lesson': lesson, 'teacher': teacher, 'date': date, 'time': time, 'location': location, 'notes': notes, 'created_at': datetime.now().isoformat(), 'notified_days': []})
+    async def add_schedule(self, stype, lesson, teacher, date, time, location, notes='', group='هر دو', is_weekly=False):
+        r = await self.schedules.insert_one({
+            'type': stype, 'lesson': lesson, 'teacher': teacher,
+            'date': date, 'time': time, 'location': location, 'notes': notes,
+            'group': group, 'is_weekly': is_weekly,
+            'created_at': datetime.now().isoformat(), 'notified_days': []
+        })
         return r.inserted_id
 
-    async def get_schedules(self, stype=None, upcoming=True):
+    async def get_schedules(self, stype=None, upcoming=True, group=None):
         q = {}
         if stype: q['type'] = stype
         if upcoming: q['date'] = {'$gte': datetime.now().strftime('%Y-%m-%d')}
-        return await self.schedules.find(q).sort('date', 1).to_list(100)
+        if group:
+            q['$or'] = [{'group': group}, {'group': 'هر دو'}, {'group': {'$exists': False}}]
+        return await self.schedules.find(q).sort('date', 1).to_list(200)
 
     async def delete_schedule(self, sid):
         try: await self.schedules.delete_one({'_id': ObjectId(sid)})
