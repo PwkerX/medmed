@@ -17,7 +17,7 @@ async def references_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     parts = data.split(':')
     action = parts[1] if len(parts) > 1 else 'main'
 
-    if action == 'main' or data == 'resources:ref':
+    if action == 'main':
         await _show_subjects(query, context)
 
     elif action == 'subject':
