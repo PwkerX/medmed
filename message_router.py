@@ -105,6 +105,10 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
+    elif text == "👤 پروفایل":
+        from profile import _show_profile_msg
+        await _show_profile_msg(update)
+
     elif text == "📅 برنامه":
         keyboard = [
             [InlineKeyboardButton("📖 کلاس‌ها",       callback_data='schedule:type:class'),
