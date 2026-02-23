@@ -137,6 +137,31 @@ class DB:
         except: pass
         await self.log(uid, 'bs_download', {'content_id': cid})
 
+
+    async def bs_update_lesson(self, lesson_id, data: dict):
+        try:
+            await self.bs_lessons.update_one({'_id': ObjectId(lesson_id)}, {'$set': data})
+            return True
+        except: return False
+
+    async def bs_update_session(self, session_id, data: dict):
+        try:
+            await self.bs_sessions.update_one({'_id': ObjectId(session_id)}, {'$set': data})
+            return True
+        except: return False
+
+    async def ref_update_subject(self, subject_id, data: dict):
+        try:
+            await self.ref_subjects.update_one({'_id': ObjectId(subject_id)}, {'$set': data})
+            return True
+        except: return False
+
+    async def ref_update_book(self, book_id, data: dict):
+        try:
+            await self.ref_books.update_one({'_id': ObjectId(book_id)}, {'$set': data})
+            return True
+        except: return False
+
     async def ref_get_subjects(self):
         return await self.ref_subjects.find({}).sort('order', 1).to_list(100)
 
