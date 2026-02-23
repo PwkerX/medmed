@@ -21,6 +21,7 @@ from schedule import schedule_callback
 from stats import stats_callback
 from notifications import notifications_callback
 from admin import admin_callback, admin_broadcast_handler, upload_file_handler, BROADCAST
+from utils import cancel_handler
 from search import search_handler, SEARCH
 from message_router import route_message
 from basic_science import basic_science_callback
@@ -100,17 +101,24 @@ def main():
             CA_WAITING_FILE: [
                 MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.VOICE, ca_file_handler),
                 CallbackQueryHandler(content_admin_callback, pattern='^ca:'),
+                CommandHandler('cancel', cancel_handler),
             ],
             CA_WAITING_TEXT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, ca_text_handler),
                 CallbackQueryHandler(content_admin_callback, pattern='^ca:'),
+                CommandHandler('cancel', cancel_handler),
             ],
             TICKET_WAITING:       [MessageHandler(filters.TEXT & ~filters.COMMAND, ticket_message_handler),
-                                   CallbackQueryHandler(ticket_callback, pattern='^ticket:')],
+                                   CallbackQueryHandler(ticket_callback, pattern='^ticket:'),
+                                   CommandHandler('cancel', cancel_handler)],
             TICKET_REPLY_WAITING: [MessageHandler(filters.TEXT & ~filters.COMMAND, ticket_message_handler),
-                                   CallbackQueryHandler(ticket_callback, pattern='^ticket:')],
+                                   CallbackQueryHandler(ticket_callback, pattern='^ticket:'),
+                                   CommandHandler('cancel', cancel_handler)],
         },
-        fallbacks=[CommandHandler('start', start_handler)],
+        fallbacks=[
+            CommandHandler('start', start_handler),
+            CommandHandler('cancel', cancel_handler),
+        ],
         allow_reentry=True,
         per_message=False,
     )
