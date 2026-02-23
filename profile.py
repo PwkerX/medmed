@@ -9,6 +9,71 @@ logger = logging.getLogger(__name__)
 PROFILE_EDIT_WAITING = 70
 
 
+
+async def _show_profile_msg(update):
+    """ارسال پروفایل از طریق پیام متنی (دکمه کیبورد)"""
+    uid  = update.effective_user.id
+    user = await db.get_user(uid)
+    if not user:
+        await update.message.reply_text("❌ کاربر پیدا نشد.")
+        return
+
+    stats   = await db.user_stats(uid)
+    tickets = await db.ticket_get_user(uid)
+    open_t  = sum(1 for t in tickets if t['status'] == 'open')
+
+    role_map = {
+        'student':       '🧑‍🎓 دانشجو',
+        'content_admin': '🎓 ادمین محتوا',
+        'admin':         '👑 ادمین'
+    }
+    role_icon = role_map.get(user.get('role', 'student'), '🧑‍🎓 دانشجو')
+
+    total_correct = stats.get('correct_answers', 0)
+    if   total_correct >= 200: rank = "🏆 نخبه"
+    elif total_correct >= 100: rank = "🥇 حرفه‌ای"
+    elif total_correct >= 50:  rank = "🥈 پیشرفته"
+    elif total_correct >= 20:  rank = "🥉 در حال رشد"
+    else:                      rank = "🌱 تازه‌کار"
+
+    pct    = stats.get('percentage', 0)
+    filled = int(pct / 10)
+    bar    = '█' * filled + '░' * (10 - filled)
+
+    reg_date = user.get('registered_at', '')[:10] if user.get('registered_at') else 'نامشخص'
+    uname    = f"@{user['username']}" if user.get('username') else '—'
+
+    text = (
+        f"╔══════════════════╗\n"
+        f"   👤 <b>پروفایل من</b>\n"
+        f"╚══════════════════╝\n\n"
+        f"📛 <b>نام:</b>  {user.get('name','')}\n"
+        f"👥 <b>گروه:</b>  گروه {user.get('group','')}\n"
+        f"📱 <b>یوزرنیم:</b>  {uname}\n"
+        f"🎭 <b>نقش:</b>  {role_icon}\n"
+        f"📅 <b>ثبت‌نام:</b>  {reg_date}\n\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📊 <b>آمار تحصیلی</b>\n\n"
+        f"🧪 سوال پاسخ داده: <b>{stats.get('total_answers',0)}</b>\n"
+        f"✅ پاسخ صحیح: <b>{total_correct}</b>\n"
+        f"📈 درصد موفقیت: <b>{pct}%</b>\n"
+        f"<code>[{bar}]</code>\n\n"
+        f"📥 دانلودها: <b>{stats.get('downloads',0)}</b>\n"
+        f"🔥 فعالیت هفتگی: <b>{stats.get('week_activity',0)}</b>\n"
+        f"🎫 تیکت باز: <b>{open_t}</b>\n\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🏅 <b>رتبه:</b>  {rank}\n"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("✏️ ویرایش نام",  callback_data='profile:edit_name'),
+         InlineKeyboardButton("👥 تغییر گروه",   callback_data='profile:edit_group')],
+        [InlineKeyboardButton("🔄 بروزرسانی",    callback_data='profile:refresh')],
+    ]
+    await update.message.reply_text(
+        text, parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard))
+
 async def profile_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query  = update.callback_query
     await query.answer()
