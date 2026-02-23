@@ -33,13 +33,16 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == 'stats':
         s = await db.global_stats()
         text = (
-            "📊 <b>آمار سیستم</b>\n━━━━━━━━━━━━━━\n\n"
-            f"👥 کاربران تأیید شده: <b>{s['users']}</b>\n"
-            f"⏳ در انتظار تأیید: <b>{s['pending']}</b>\n"
-            f"📚 منابع: <b>{s['resources']}</b>\n"
-            f"🎥 ویدیوها: <b>{s['videos']}</b>\n"
-            f"🧪 سوالات: <b>{s['questions']}</b>\n"
-            f"📥 دانلودها: <b>{s['downloads']}</b>"
+            "📊 <b>آمار سیستم</b>\n━━━━━━━━━━━━━━━━\n\n"
+            f"👥 کاربران تأیید: <b>{s['users']}</b>  |  ⏳ منتظر: <b>{s['pending']}</b>\n"
+            f"🆕 کاربر جدید این هفته: <b>{s.get('new_users_week',0)}</b>\n"
+            f"🎓 ادمین محتوا: <b>{s.get('content_admins',0)}</b>\n\n"
+            f"🔬 علوم پایه:\n"
+            f"  📖 درس‌ها: <b>{s.get('bs_lessons',0)}</b>  |  📌 جلسات: <b>{s.get('bs_sessions',0)}</b>  |  📁 فایل: <b>{s.get('bs_content',0)}</b>\n\n"
+            f"📚 رفرنس‌ها:\n"
+            f"  📖 درس‌ها: <b>{s.get('ref_subjects',0)}</b>  |  📘 کتاب: <b>{s.get('ref_books',0)}</b>\n\n"
+            f"🧪 بانک سوال: <b>{s['questions']}</b>  |  📁 فایل: <b>{s.get('qbank_files',0)}</b>\n"
+            f"🎫 تیکت‌های باز: <b>{s.get('open_tickets',0)}</b>"
         )
         await query.edit_message_text(text, parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([
