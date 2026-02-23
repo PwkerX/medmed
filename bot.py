@@ -22,6 +22,7 @@ from stats import stats_callback
 from notifications import notifications_callback
 from admin import admin_callback, admin_broadcast_handler, upload_file_handler, BROADCAST
 from utils import cancel_handler
+from profile import profile_callback, profile_text_handler, PROFILE_EDIT_WAITING
 from search import search_handler, SEARCH
 from message_router import route_message
 from basic_science import basic_science_callback
@@ -87,8 +88,6 @@ def main():
             REGISTER:        [CallbackQueryHandler(register_start_callback, pattern="^register:")],
             STEP_NAME:       [MessageHandler(filters.TEXT & ~filters.COMMAND, step_name_handler),
                               CallbackQueryHandler(register_start_callback, pattern="^register:cancel")],
-            STEP_STUDENT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, step_student_id_handler),
-                              CallbackQueryHandler(register_start_callback, pattern="^register:cancel")],
             STEP_GROUP:      [CallbackQueryHandler(register_start_callback, pattern="^register:(group1|group2|cancel)")],
             SEARCH:          [MessageHandler(filters.TEXT & ~filters.COMMAND, search_handler)],
             ANSWERING:       [CallbackQueryHandler(handle_question_answer, pattern='^answer:')],
@@ -108,6 +107,11 @@ def main():
                 CallbackQueryHandler(content_admin_callback, pattern='^ca:'),
                 CommandHandler('cancel', cancel_handler),
             ],
+            PROFILE_EDIT_WAITING: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, profile_text_handler),
+                CallbackQueryHandler(profile_callback, pattern='^profile:'),
+                CommandHandler('cancel', cancel_handler),
+            ],
             TICKET_WAITING:       [MessageHandler(filters.TEXT & ~filters.COMMAND, ticket_message_handler),
                                    CallbackQueryHandler(ticket_callback, pattern='^ticket:'),
                                    CommandHandler('cancel', cancel_handler)],
@@ -125,6 +129,7 @@ def main():
     app.add_handler(conv)
 
     # ── ترتیب مهم است: specific اول، general بعد ──
+    app.add_handler(CallbackQueryHandler(profile_callback, pattern='^profile:'))
     app.add_handler(CallbackQueryHandler(basic_science_callback, pattern='^bs[_:]'))
     app.add_handler(CallbackQueryHandler(references_callback,    pattern='^ref[_:]'))
     app.add_handler(CallbackQueryHandler(route_resources,        pattern='^resources:menu'))
