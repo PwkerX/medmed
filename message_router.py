@@ -165,19 +165,30 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _admin_panel_msg(update):
+    """منوی پنل ادمین — دقیقاً همان ساختار _admin_menu در admin.py"""
+    from database import db as _db
+    s = await _db.global_stats()
     keyboard = [
-        [InlineKeyboardButton("📊 آمار سیستم",          callback_data='admin:stats')],
-        [InlineKeyboardButton("👥 مدیریت کاربران",       callback_data='admin:users'),
-         InlineKeyboardButton("⏳ تأیید کاربران",        callback_data='admin:pending')],
-        [InlineKeyboardButton("🎓 ادمین‌های محتوا",      callback_data='admin:content_admins')],
-        [InlineKeyboardButton("📘 علوم پایه",            callback_data='ca:terms'),
-         InlineKeyboardButton("📚 رفرنس‌ها",             callback_data='ca:refs')],
-        [InlineKeyboardButton("❓ مدیریت FAQ",            callback_data='ca:faq')],
-        [InlineKeyboardButton("🧪 بانک سوال",            callback_data='admin:qbank_manage')],
-        [InlineKeyboardButton("✅ تأیید سوالات",          callback_data='admin:pending_q')],
-        [InlineKeyboardButton("📅 برنامه جدید",          callback_data='admin:add_schedule')],
-        [InlineKeyboardButton("🎫 تیکت‌های باز",         callback_data='ticket:admin_list')],
-        [InlineKeyboardButton("📢 ارسال همگانی",          callback_data='admin:broadcast')],
+        [InlineKeyboardButton(
+            f"📊 آمار سیستم  ({s['users']} کاربر | {s.get('open_tickets',0)} تیکت باز)",
+            callback_data='admin:stats'
+        )],
+        [InlineKeyboardButton("👥 مدیریت کاربران",   callback_data='admin:users'),
+         InlineKeyboardButton("⏳ تأیید کاربران",    callback_data='admin:pending')],
+        [InlineKeyboardButton("🔍 جستجوی کاربر",     callback_data='admin:search_user')],
+        [InlineKeyboardButton("🎓 ادمین‌های محتوا",  callback_data='admin:content_admins')],
+        [InlineKeyboardButton("📘 علوم پایه",        callback_data='ca:terms_admin'),
+         InlineKeyboardButton("📚 رفرنس‌ها",         callback_data='ca:refs_admin')],
+        [InlineKeyboardButton("❓ مدیریت FAQ",        callback_data='ca:faq')],
+        [InlineKeyboardButton("🧪 بانک سوال",        callback_data='admin:qbank_manage'),
+         InlineKeyboardButton("✅ تأیید سوالات",     callback_data='admin:pending_q')],
+        [InlineKeyboardButton("📅 برنامه جدید",      callback_data='admin:add_schedule'),
+         InlineKeyboardButton("🗑 حذف برنامه",       callback_data='admin:del_schedule_list')],
+        [InlineKeyboardButton("🎫 تیکت‌های باز",     callback_data='ticket:admin_list')],
+        [InlineKeyboardButton("📢 ارسال همگانی",      callback_data='admin:broadcast')],
     ]
-    await update.message.reply_text("👨‍⚕️ <b>پنل مدیریت</b>", parse_mode='HTML',
-                                     reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        "👨‍⚕️ <b>پنل مدیریت</b>\n━━━━━━━━━━━━━━━━",
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
