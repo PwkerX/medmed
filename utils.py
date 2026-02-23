@@ -46,3 +46,15 @@ def admin_keyboard():
         [KeyboardButton("🔔 اعلان‌ها"),       KeyboardButton("🎫 پشتیبانی")],
         [KeyboardButton("👨‍⚕️ پنل ادمین"),   KeyboardButton("🎓 پنل محتوا")],
     ], resize_keyboard=True)
+
+async def cancel_handler(update, context):
+    """لغو هر عملیات در حال انجام با /cancel"""
+    from telegram.ext import ConversationHandler
+    # پاک‌سازی تمام حالت‌های فعال
+    for key in ['ca_mode', 'ca_pending_file', 'ca_content_type',
+                'ca_edit_target', 'ca_edit_field',
+                'ticket_mode', 'mode', 'creating_question']:
+        context.user_data.pop(key, None)
+    await update.message.reply_text(
+        "✅ عملیات لغو شد.\n\nبرای ادامه از دکمه‌های ربات استفاده کنید.")
+    return ConversationHandler.END
