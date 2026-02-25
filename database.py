@@ -167,14 +167,16 @@ class DB:
     # ════ ترتیب‌بندی (Reorder) ════
 
     async def _normalize_order(self, col, query_filter):
-        """اگه آیتم‌ها order نداشتن، بر اساس _id ترتیب بده"""
-        items = await col.find(query_filter).sort('_id', 1).to_list(1000)
-        needs_fix = any('order' not in item for item in items)
-        if needs_fix:
-            for i, item in enumerate(items):
+        """همه آیتم‌ها رو sort کن و order رو از 0 بده — همیشه اجرا میشه"""
+        # اول بر اساس order موجود sort کن، اگه نداشتن بر اساس _id
+        items = await col.find(query_filter).to_list(1000)
+        # sort: اول اونایی که order دارن، بقیه آخر
+        items.sort(key=lambda x: (x.get('order', 99999), str(x['_id'])))
+        # همه order ها رو از صفر بنویس تا یکتا و پیوسته باشن
+        for i, item in enumerate(items):
+            if item.get('order') != i:
                 await col.update_one({'_id': item['_id']}, {'$set': {'order': i}})
-            # دوباره بخون
-            items = await col.find(query_filter).sort('order', 1).to_list(1000)
+                item['order'] = i
         return items
 
     async def reorder_up(self, collection, doc_id, query_filter):
