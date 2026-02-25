@@ -467,9 +467,9 @@ async def _show_lessons(query, context, term, back='ca:terms'):
         # ردیف ترتیب
         nav = []
         if i > 0:
-            nav.append(InlineKeyboardButton("⬆️ بالاتر", callback_data=f'ca:lesson_up:{lid}'))
+            nav.append(InlineKeyboardButton("⬆️", callback_data=f'ca:lesson_up:{lid}'))
         if i < len(lessons) - 1:
-            nav.append(InlineKeyboardButton("⬇️ پایین‌تر", callback_data=f'ca:lesson_down:{lid}'))
+            nav.append(InlineKeyboardButton("⬇️", callback_data=f'ca:lesson_down:{lid}'))
         if nav:
             kb.append(nav)
     kb.append([InlineKeyboardButton("➕ درس جدید", callback_data=f'ca:add_lesson_prompt:{idx}')])
@@ -560,9 +560,9 @@ async def _show_ref_subjects(query, back='ca:main'):
         ])
         nav = []
         if i > 0:
-            nav.append(InlineKeyboardButton("⬆️ بالاتر", callback_data=f'ca:ref_subject_up:{sid}'))
+            nav.append(InlineKeyboardButton("⬆️", callback_data=f'ca:ref_subject_up:{sid}'))
         if i < len(subjects) - 1:
-            nav.append(InlineKeyboardButton("⬇️ پایین‌تر", callback_data=f'ca:ref_subject_down:{sid}'))
+            nav.append(InlineKeyboardButton("⬇️", callback_data=f'ca:ref_subject_down:{sid}'))
         if nav:
             kb.append(nav)
     kb.append([InlineKeyboardButton("➕ درس جدید", callback_data='ca:add_ref_subject_prompt')])
@@ -585,9 +585,9 @@ async def _show_ref_books(query, context, sid, back='ca:refs'):
         ])
         nav = []
         if i > 0:
-            nav.append(InlineKeyboardButton("⬆️ بالاتر", callback_data=f'ca:ref_book_up:{bid}'))
+            nav.append(InlineKeyboardButton("⬆️", callback_data=f'ca:ref_book_up:{bid}'))
         if i < len(books) - 1:
-            nav.append(InlineKeyboardButton("⬇️ پایین‌تر", callback_data=f'ca:ref_book_down:{bid}'))
+            nav.append(InlineKeyboardButton("⬇️", callback_data=f'ca:ref_book_down:{bid}'))
         if nav:
             kb.append(nav)
     kb.append([InlineKeyboardButton("➕ کتاب جدید", callback_data=f'ca:add_ref_book_prompt:{sid}')])
