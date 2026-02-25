@@ -30,6 +30,7 @@ async def route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── حالت ادمین محتوا ──
     if context.user_data.get('ca_mode') in ('add_lesson','add_session','waiting_description',
+                                              'waiting_ref_description',
                                               'add_faq','add_ref_subject','add_ref_book',
                                               'edit_lesson','edit_session',
                                               'edit_ref_subject','edit_ref_book'):
