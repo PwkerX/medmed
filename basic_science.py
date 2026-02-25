@@ -164,7 +164,14 @@ async def _download_content(query, content_id, uid):
         await query.answer("❌ فایل پیدا نشد!", show_alert=True); return
     await db.bs_inc_download(content_id, uid)
     ctype   = item.get('type', 'pdf')
-    caption = f"{CONTENT_ICONS.get(ctype,'📎')}\n📝 {item.get('description','')}\n📥 {item.get('downloads',0)} دانلود"
+    # کپشن: نوع فایل + توضیح (اگه داشت) + توضیح اضافه (اگه داشت) + دانلود
+    parts = [CONTENT_ICONS.get(ctype,'📎')]
+    if item.get('description'):
+        parts.append(f"📝 {item['description']}")
+    if item.get('extra_info'):
+        parts.append(f"\n{item['extra_info']}")
+    parts.append(f"📥 {item.get('downloads',0)} دانلود")
+    caption = '\n'.join(parts)
     try:
         if ctype == 'video':
             await query.message.reply_video(item['file_id'], caption=caption, parse_mode='HTML')
