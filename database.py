@@ -166,67 +166,79 @@ class DB:
 
     # ════ ترتیب‌بندی (Reorder) ════
 
+    async def _normalize_order(self, col, query_filter):
+        """اگه آیتم‌ها order نداشتن، بر اساس _id ترتیب بده"""
+        items = await col.find(query_filter).sort('_id', 1).to_list(1000)
+        needs_fix = any('order' not in item for item in items)
+        if needs_fix:
+            for i, item in enumerate(items):
+                await col.update_one({'_id': item['_id']}, {'$set': {'order': i}})
+            # دوباره بخون
+            items = await col.find(query_filter).sort('order', 1).to_list(1000)
+        return items
+
     async def reorder_up(self, collection, doc_id, query_filter):
-        """یک آیتم رو یه پله بالاتر بیار"""
+        """یک آیتم رو یه پله بالاتر بیار — با normalize خودکار"""
         from bson import ObjectId as OID
         try:
-            col  = getattr(self, collection)
-            item = await col.find_one({'_id': OID(doc_id)})
-            if not item: return False
-            cur_order = item.get('order', 0)
-            if cur_order == 0: return False
-            prev = await col.find_one({**query_filter, 'order': cur_order - 1})
-            if prev:
-                await col.update_one({'_id': item['_id']},  {'$set': {'order': cur_order - 1}})
-                await col.update_one({'_id': prev['_id']},  {'$set': {'order': cur_order}})
+            col   = getattr(self, collection)
+            items = await self._normalize_order(col, query_filter)
+            ids   = [str(it['_id']) for it in items]
+            if doc_id not in ids: return False
+            idx = ids.index(doc_id)
+            if idx == 0: return False
+            # جابجایی با آیتم قبلی
+            prev_id = items[idx - 1]['_id']
+            curr_id = items[idx]['_id']
+            await col.update_one({'_id': curr_id}, {'$set': {'order': idx - 1}})
+            await col.update_one({'_id': prev_id}, {'$set': {'order': idx}})
             return True
         except Exception as e:
             return False
 
     async def reorder_down(self, collection, doc_id, query_filter):
-        """یک آیتم رو یه پله پایین‌تر ببر"""
+        """یک آیتم رو یه پله پایین‌تر ببر — با normalize خودکار"""
         from bson import ObjectId as OID
         try:
             col   = getattr(self, collection)
-            item  = await col.find_one({'_id': OID(doc_id)})
-            if not item: return False
-            cur_order = item.get('order', 0)
-            total = await col.count_documents(query_filter)
-            if cur_order >= total - 1: return False
-            nxt = await col.find_one({**query_filter, 'order': cur_order + 1})
-            if nxt:
-                await col.update_one({'_id': item['_id']}, {'$set': {'order': cur_order + 1}})
-                await col.update_one({'_id': nxt['_id']},  {'$set': {'order': cur_order}})
+            items = await self._normalize_order(col, query_filter)
+            ids   = [str(it['_id']) for it in items]
+            if doc_id not in ids: return False
+            idx = ids.index(doc_id)
+            if idx >= len(items) - 1: return False
+            next_id = items[idx + 1]['_id']
+            curr_id = items[idx]['_id']
+            await col.update_one({'_id': curr_id}, {'$set': {'order': idx + 1}})
+            await col.update_one({'_id': next_id}, {'$set': {'order': idx}})
             return True
         except Exception as e:
             return False
 
     async def reorder_content_up(self, content_id, session_id):
-        """فایل محتوا رو بالاتر ببر"""
+        """فایل محتوا رو بالاتر ببر — با normalize خودکار"""
         try:
-            item = await self.bs_content.find_one({'_id': ObjectId(content_id)})
-            if not item: return False
-            cur = item.get('order', 0)
-            if cur == 0: return False
-            prev = await self.bs_content.find_one({'session_id': session_id, 'order': cur - 1})
-            if prev:
-                await self.bs_content.update_one({'_id': item['_id']}, {'$set': {'order': cur - 1}})
-                await self.bs_content.update_one({'_id': prev['_id']}, {'$set': {'order': cur}})
+            qf    = {'session_id': session_id}
+            items = await self._normalize_order(self.bs_content, qf)
+            ids   = [str(it['_id']) for it in items]
+            if content_id not in ids: return False
+            idx = ids.index(content_id)
+            if idx == 0: return False
+            await self.bs_content.update_one({'_id': items[idx]['_id']},     {'$set': {'order': idx - 1}})
+            await self.bs_content.update_one({'_id': items[idx-1]['_id']},   {'$set': {'order': idx}})
             return True
         except: return False
 
     async def reorder_content_down(self, content_id, session_id):
-        """فایل محتوا رو پایین‌تر ببر"""
+        """فایل محتوا رو پایین‌تر ببر — با normalize خودکار"""
         try:
-            item = await self.bs_content.find_one({'_id': ObjectId(content_id)})
-            if not item: return False
-            cur   = item.get('order', 0)
-            total = await self.bs_content.count_documents({'session_id': session_id})
-            if cur >= total - 1: return False
-            nxt = await self.bs_content.find_one({'session_id': session_id, 'order': cur + 1})
-            if nxt:
-                await self.bs_content.update_one({'_id': item['_id']}, {'$set': {'order': cur + 1}})
-                await self.bs_content.update_one({'_id': nxt['_id']}, {'$set': {'order': cur}})
+            qf    = {'session_id': session_id}
+            items = await self._normalize_order(self.bs_content, qf)
+            ids   = [str(it['_id']) for it in items]
+            if content_id not in ids: return False
+            idx = ids.index(content_id)
+            if idx >= len(items) - 1: return False
+            await self.bs_content.update_one({'_id': items[idx]['_id']},     {'$set': {'order': idx + 1}})
+            await self.bs_content.update_one({'_id': items[idx+1]['_id']},   {'$set': {'order': idx}})
             return True
         except: return False
 
