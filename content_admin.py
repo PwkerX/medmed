@@ -1,14 +1,13 @@
 """
-پنل ادمین محتوا — نسخه نهایی
-فیکس‌ها:
+پنل ادمین محتوا — نسخه نهایی با:
+  ✅ ترتیب‌بندی درس‌ها (بالا/پایین)
+  ✅ ترتیب‌بندی فایل‌های جلسه
+  ✅ چند جلد برای رفرنس
+  ✅ توضیحات اضافه (اختیاری) برای فایل
   ✅ لغو با /cancel در هر مرحله
-  ✅ دکمه لغو اینلاین در هر مرحله
-  ✅ ویرایش درس، جلسه، رفرنس، کتاب
-  ✅ دسترسی کامل content_admin (نه فقط ادمین اصلی)
-  ✅ یک تابع واحد بدون پچ
+  ✅ ویرایش و حذف همه موارد
 """
-import os
-import logging
+import os, logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from database import db
@@ -29,18 +28,10 @@ CONTENT_TYPES = [
 CA_WAITING_FILE = 50
 CA_WAITING_TEXT = 51
 
-EDIT_MODES = (
-    'add_lesson', 'add_session', 'waiting_description',
-    'add_faq', 'add_ref_subject', 'add_ref_book',
-    'edit_lesson', 'edit_session', 'edit_ref_subject', 'edit_ref_book',
-    'waiting_ref_file', 'waiting_file',
-)
-
 
 def _clear(context):
-    """پاک‌سازی کامل وضعیت"""
-    for k in ['ca_mode', 'ca_pending_file', 'ca_content_type',
-              'ca_edit_target', 'ca_edit_field']:
+    for k in ['ca_mode','ca_pending_file','ca_content_type',
+              'ca_edit_target','ca_edit_field','ca_ref_lang','ca_ref_volume']:
         context.user_data.pop(k, None)
 
 
@@ -49,7 +40,7 @@ def _back_btn(label, cb):
 
 
 # ══════════════════════════════════════════════════════════
-#  Callback اصلی — یک تابع واحد
+#  Callback اصلی
 # ══════════════════════════════════════════════════════════
 async def content_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query  = update.callback_query
@@ -60,14 +51,13 @@ async def content_admin_callback(update: Update, context: ContextTypes.DEFAULT_T
     action = parts[1] if len(parts) > 1 else 'main'
 
     if not await db.is_content_admin(uid):
-        await query.answer("❌ دسترسی ندارید!", show_alert=True)
-        return
+        await query.answer("❌ دسترسی ندارید!", show_alert=True); return
 
-    # ── هر بار دکمه زده شد، ca_mode پاک شه (مگر حالت‌های منتظر ورودی) ──
-    KEEP_MODE = ('add_lesson_prompt', 'add_session_prompt', 'sel_ctype',
-                 'add_ref_subject_prompt', 'add_ref_book_prompt', 'add_faq_prompt',
-                 'upload_ref', 'edit_lesson_prompt', 'edit_session_prompt',
-                 'edit_ref_subject_prompt', 'edit_ref_book_prompt')
+    KEEP_MODE = ('sel_ctype','upload_ref','add_lesson_prompt','add_session_prompt',
+                 'add_ref_subject_prompt','add_ref_book_prompt','add_faq_prompt',
+                 'upload_ref_volume_prompt','upload_content',
+                 'edit_lesson_prompt','edit_session_prompt',
+                 'edit_ref_subject_prompt','edit_ref_book_prompt')
     if action not in KEEP_MODE:
         _clear(context)
 
@@ -80,198 +70,185 @@ async def content_admin_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     # ══════════ علوم پایه ══════════
 
-    elif action in ('terms', 'terms_admin'):
+    elif action in ('terms','terms_admin'):
         context.user_data['ca_from_admin'] = from_admin
         await _show_terms(query, back=back_main)
 
     elif action == 'term':
-        idx  = int(parts[2])
-        context.user_data['ca_term']     = TERMS[idx]
-        context.user_data['ca_term_idx'] = idx
-        fa   = context.user_data.get('ca_from_admin', False)
+        idx = int(parts[2])
+        context.user_data.update({'ca_term': TERMS[idx], 'ca_term_idx': idx})
+        fa  = context.user_data.get('ca_from_admin', False)
         await _show_lessons(query, context, TERMS[idx],
                             back='ca:terms_admin' if fa else 'ca:terms')
 
     # ─ افزودن درس ─
     elif action == 'add_lesson_prompt':
-        idx  = int(parts[2])
-        term = TERMS[idx]
+        idx  = int(parts[2]); term = TERMS[idx]
         context.user_data.update({'ca_term_idx': idx, 'ca_term': term, 'ca_mode': 'add_lesson'})
         await query.edit_message_text(
             f"➕ <b>درس جدید — {term}</b>\n\n"
-            "📝 فرمت: <code>نام درس, نام استاد</code>\n"
-            "مثال: <code>فیزیولوژی, دکتر احمدی</code>\n\n"
-            "<i>استاد اختیاری است</i>\n\n"
-            "⌨️ برای لغو: /cancel",
-            parse_mode='HTML',
-            reply_markup=_back_btn("❌ لغو", f'ca:term:{idx}'))
+            "فرمت: <code>نام درس, نام استاد</code>\n"
+            "مثال: <code>فیزیولوژی, دکتر احمدی</code>\n"
+            "<i>استاد اختیاری</i>\n\n⌨️ /cancel برای لغو",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:term:{idx}'))
+
+    # ─ ترتیب درس‌ها ─
+    elif action == 'lesson_up':
+        lid = parts[2]; idx = context.user_data.get('ca_term_idx', 0)
+        await db.reorder_up('bs_lessons', lid, {'term': TERMS[idx]})
+        fa = context.user_data.get('ca_from_admin', False)
+        await _show_lessons(query, context, TERMS[idx],
+                            back='ca:terms_admin' if fa else 'ca:terms')
+
+    elif action == 'lesson_down':
+        lid = parts[2]; idx = context.user_data.get('ca_term_idx', 0)
+        await db.reorder_down('bs_lessons', lid, {'term': TERMS[idx]})
+        fa = context.user_data.get('ca_from_admin', False)
+        await _show_lessons(query, context, TERMS[idx],
+                            back='ca:terms_admin' if fa else 'ca:terms')
 
     # ─ ویرایش درس ─
     elif action == 'edit_lesson_menu':
-        lid    = parts[2]
-        lesson = await db.bs_get_lesson(lid)
+        lid = parts[2]; lesson = await db.bs_get_lesson(lid)
         if not lesson: return
-        keyboard = [
+        kb = [
             [InlineKeyboardButton("✏️ ویرایش نام درس",   callback_data=f'ca:edit_lesson_prompt:{lid}:name')],
             [InlineKeyboardButton("✏️ ویرایش نام استاد", callback_data=f'ca:edit_lesson_prompt:{lid}:teacher')],
             [InlineKeyboardButton("🔙 بازگشت",            callback_data=f'ca:lesson:{lid}')],
         ]
         await query.edit_message_text(
-            f"✏️ <b>ویرایش درس «{lesson['name']}»</b>\n\nکدام فیلد؟",
-            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+            f"✏️ <b>ویرایش درس «{lesson['name']}»</b>",
+            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
     elif action == 'edit_lesson_prompt':
-        lid   = parts[2]
-        field = parts[3]
+        lid = parts[2]; field = parts[3]
         lesson = await db.bs_get_lesson(lid)
         if not lesson: return
         label = 'نام درس' if field == 'name' else 'نام استاد'
-        current = lesson.get(field, '')
-        context.user_data.update({'ca_mode': 'edit_lesson', 'ca_edit_target': lid, 'ca_edit_field': field})
+        context.user_data.update({'ca_mode':'edit_lesson','ca_edit_target':lid,'ca_edit_field':field})
         await query.edit_message_text(
-            f"✏️ <b>ویرایش {label}</b>\n\n"
-            f"مقدار فعلی: <b>{current}</b>\n\n"
-            "مقدار جدید را بنویسید:\n⌨️ برای لغو: /cancel",
-            parse_mode='HTML',
-            reply_markup=_back_btn("❌ لغو", f'ca:lesson:{lid}'))
+            f"✏️ <b>ویرایش {label}</b>\n\nفعلی: <b>{lesson.get(field,'')}</b>\n\nجدید بنویسید:\n⌨️ /cancel",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:lesson:{lid}'))
 
     # ─ حذف درس ─
     elif action == 'del_lesson':
-        lid    = parts[2]
-        lesson = await db.bs_get_lesson(lid)
+        lid = parts[2]; lesson = await db.bs_get_lesson(lid)
         if not lesson: return
-        idx    = context.user_data.get('ca_term_idx', 0)
+        idx = context.user_data.get('ca_term_idx', 0)
         await query.edit_message_text(
-            f"⚠️ <b>حذف درس «{lesson['name']}»؟</b>\n\nتمام جلسات و محتوا هم حذف می‌شود!",
+            f"⚠️ <b>حذف درس «{lesson['name']}»؟</b>\nتمام جلسات و محتوا حذف می‌شود!",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🗑 بله، حذف کن", callback_data=f'ca:confirm_del_lesson:{lid}')],
-                [InlineKeyboardButton("❌ لغو",          callback_data=f'ca:term:{idx}')],
+                [InlineKeyboardButton("🗑 بله", callback_data=f'ca:confirm_del_lesson:{lid}')],
+                [InlineKeyboardButton("❌ لغو", callback_data=f'ca:term:{idx}')],
             ]))
 
     elif action == 'confirm_del_lesson':
-        lid    = parts[2]
-        lesson = await db.bs_get_lesson(lid)
-        name   = lesson['name'] if lesson else ''
+        lid = parts[2]; lesson = await db.bs_get_lesson(lid)
+        name = lesson['name'] if lesson else ''
         await db.bs_delete_lesson(lid)
-        idx    = context.user_data.get('ca_term_idx', 0)
-        await query.edit_message_text(
-            f"✅ درس «{name}» حذف شد.",
-            reply_markup=_back_btn("🔙 بازگشت به ترم", f'ca:term:{idx}'))
+        idx = context.user_data.get('ca_term_idx', 0)
+        await query.edit_message_text(f"✅ درس «{name}» حذف شد.",
+            reply_markup=_back_btn("🔙 بازگشت", f'ca:term:{idx}'))
 
     # ─ جلسات ─
     elif action == 'lesson':
-        lid    = parts[2]
-        context.user_data['ca_lesson_id'] = lid
+        lid = parts[2]; context.user_data['ca_lesson_id'] = lid
         await _show_sessions(query, context, lid)
 
-    # ─ افزودن جلسه ─
     elif action == 'add_session_prompt':
-        lid      = parts[2]
+        lid = parts[2]
         context.user_data.update({'ca_lesson_id': lid, 'ca_mode': 'add_session'})
-        sessions = await db.bs_get_sessions(lid)
-        next_n   = len(sessions) + 1
+        sessions = await db.bs_get_sessions(lid); next_n = len(sessions) + 1
         lesson   = await db.bs_get_lesson(lid)
-        lname    = lesson.get('name','') if lesson else ''
         await query.edit_message_text(
-            f"➕ <b>جلسه جدید — {lname}</b>\n\n"
-            f"📝 فرمت: <code>شماره, موضوع, استاد</code>\n"
-            f"مثال: <code>{next_n}, فیزیولوژی کلیه, دکتر احمدی</code>\n\n"
-            f"<i>شماره پیشنهادی: <b>{next_n}</b> — استاد اختیاری</i>\n\n"
-            "⌨️ برای لغو: /cancel",
-            parse_mode='HTML',
-            reply_markup=_back_btn("❌ لغو", f'ca:lesson:{lid}'))
+            f"➕ <b>جلسه جدید — {lesson.get('name','') if lesson else ''}</b>\n\n"
+            f"فرمت: <code>شماره, موضوع, استاد</code>\n"
+            f"مثال: <code>{next_n}, فیزیولوژی کلیه, دکتر احمدی</code>\n"
+            f"<i>شماره پیشنهادی: {next_n} — استاد اختیاری</i>\n\n⌨️ /cancel",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:lesson:{lid}'))
 
-    # ─ ویرایش جلسه ─
     elif action == 'edit_session_menu':
-        sid     = parts[2]
-        session = await db.bs_get_session(sid)
+        sid = parts[2]; session = await db.bs_get_session(sid)
         if not session: return
-        keyboard = [
-            [InlineKeyboardButton("✏️ ویرایش موضوع",      callback_data=f'ca:edit_session_prompt:{sid}:topic')],
-            [InlineKeyboardButton("✏️ ویرایش نام استاد",  callback_data=f'ca:edit_session_prompt:{sid}:teacher')],
-            [InlineKeyboardButton("✏️ ویرایش شماره جلسه", callback_data=f'ca:edit_session_prompt:{sid}:number')],
-            [InlineKeyboardButton("🔙 بازگشت",            callback_data=f'ca:session:{sid}')],
+        kb = [
+            [InlineKeyboardButton("✏️ موضوع",      callback_data=f'ca:edit_session_prompt:{sid}:topic')],
+            [InlineKeyboardButton("✏️ نام استاد",  callback_data=f'ca:edit_session_prompt:{sid}:teacher')],
+            [InlineKeyboardButton("✏️ شماره جلسه", callback_data=f'ca:edit_session_prompt:{sid}:number')],
+            [InlineKeyboardButton("🔙 بازگشت",     callback_data=f'ca:session:{sid}')],
         ]
         await query.edit_message_text(
-            f"✏️ <b>ویرایش جلسه {session.get('number','')} — {session.get('topic','')}</b>\n\nکدام فیلد؟",
-            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+            f"✏️ <b>ویرایش جلسه {session.get('number','')} — {session.get('topic','')}</b>",
+            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
     elif action == 'edit_session_prompt':
-        sid   = parts[2]
-        field = parts[3]
-        session = await db.bs_get_session(sid)
+        sid = parts[2]; field = parts[3]; session = await db.bs_get_session(sid)
         if not session: return
-        labels  = {'topic': 'موضوع', 'teacher': 'نام استاد', 'number': 'شماره جلسه'}
-        current = str(session.get(field, ''))
-        context.user_data.update({'ca_mode': 'edit_session', 'ca_edit_target': sid, 'ca_edit_field': field})
+        labels = {'topic':'موضوع','teacher':'نام استاد','number':'شماره جلسه'}
+        context.user_data.update({'ca_mode':'edit_session','ca_edit_target':sid,'ca_edit_field':field})
         await query.edit_message_text(
-            f"✏️ <b>ویرایش {labels.get(field,'')}</b>\n\n"
-            f"مقدار فعلی: <b>{current}</b>\n\n"
-            "مقدار جدید را بنویسید:\n⌨️ برای لغو: /cancel",
-            parse_mode='HTML',
-            reply_markup=_back_btn("❌ لغو", f'ca:session:{sid}'))
+            f"✏️ <b>ویرایش {labels.get(field,'')}</b>\n\nفعلی: <b>{session.get(field,'')}</b>\n\nجدید بنویسید:\n⌨️ /cancel",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:session:{sid}'))
 
-    # ─ حذف جلسه ─
     elif action == 'del_session':
-        sid     = parts[2]
-        session = await db.bs_get_session(sid)
+        sid = parts[2]; session = await db.bs_get_session(sid)
         if not session: return
-        lid     = context.user_data.get('ca_lesson_id','')
+        lid = context.user_data.get('ca_lesson_id','')
         await query.edit_message_text(
-            f"⚠️ <b>حذف جلسه {session.get('number','')} — {session.get('topic','')}؟</b>\n\n"
-            "تمام محتوای این جلسه هم حذف می‌شود!",
+            f"⚠️ <b>حذف جلسه {session.get('number','')} — {session.get('topic','')}؟</b>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🗑 بله، حذف کن", callback_data=f'ca:confirm_del_session:{sid}')],
-                [InlineKeyboardButton("❌ لغو",          callback_data=f'ca:lesson:{lid}')],
+                [InlineKeyboardButton("🗑 بله", callback_data=f'ca:confirm_del_session:{sid}')],
+                [InlineKeyboardButton("❌ لغو", callback_data=f'ca:lesson:{lid}')],
             ]))
 
     elif action == 'confirm_del_session':
-        sid = parts[2]
-        await db.bs_delete_session(sid)
+        sid = parts[2]; await db.bs_delete_session(sid)
         lid = context.user_data.get('ca_lesson_id','')
-        await query.edit_message_text(
-            "✅ جلسه حذف شد.",
+        await query.edit_message_text("✅ جلسه حذف شد.",
             reply_markup=_back_btn("🔙 بازگشت", f'ca:lesson:{lid}'))
 
     # ─ محتوای جلسه ─
     elif action == 'session':
-        sid = parts[2]
-        context.user_data['ca_session_id'] = sid
+        sid = parts[2]; context.user_data['ca_session_id'] = sid
         await _show_session_content(query, context, sid)
 
-    # ─ آپلود محتوا ─
     elif action == 'upload_content':
-        sid = parts[2]
-        context.user_data['ca_session_id'] = sid
-        keyboard = [[InlineKeyboardButton(label, callback_data=f'ca:sel_ctype:{sid}:{ct}')]
-                    for ct, label in CONTENT_TYPES]
-        keyboard.append([InlineKeyboardButton("❌ لغو", callback_data=f'ca:session:{sid}')])
-        await query.edit_message_text(
-            "📤 <b>نوع محتوا را انتخاب کنید:</b>",
-            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
+        sid = parts[2]; context.user_data['ca_session_id'] = sid
+        kb = [[InlineKeyboardButton(label, callback_data=f'ca:sel_ctype:{sid}:{ct}')]
+              for ct, label in CONTENT_TYPES]
+        kb.append([InlineKeyboardButton("❌ لغو", callback_data=f'ca:session:{sid}')])
+        await query.edit_message_text("📤 <b>نوع محتوا:</b>",
+            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
     elif action == 'sel_ctype':
-        sid   = parts[2]
-        ctype = parts[3]
-        context.user_data.update({'ca_session_id': sid, 'ca_content_type': ctype, 'ca_mode': 'waiting_file'})
-        tlabel = dict(CONTENT_TYPES).get(ctype, ctype)
+        sid = parts[2]; ctype = parts[3]
+        context.user_data.update({'ca_session_id':sid,'ca_content_type':ctype,'ca_mode':'waiting_file'})
+        tl = dict(CONTENT_TYPES).get(ctype, ctype)
         await query.edit_message_text(
-            f"📤 <b>آپلود {tlabel}</b>\n\nفایل را ارسال کنید:\n⌨️ برای لغو: /cancel",
-            parse_mode='HTML',
-            reply_markup=_back_btn("❌ لغو", f'ca:session:{sid}'))
+            f"📤 <b>آپلود {tl}</b>\n\nفایل را ارسال کنید:\n⌨️ /cancel",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:session:{sid}'))
         return CA_WAITING_FILE
+
+    # ─ ترتیب فایل‌های جلسه ─
+    elif action == 'content_up':
+        cid = parts[2]; sid = context.user_data.get('ca_session_id','')
+        await db.reorder_content_up(cid, sid)
+        await _show_session_content(query, context, sid)
+
+    elif action == 'content_down':
+        cid = parts[2]; sid = context.user_data.get('ca_session_id','')
+        await db.reorder_content_down(cid, sid)
+        await _show_session_content(query, context, sid)
 
     # ─ حذف محتوا ─
     elif action == 'del_content':
-        cid  = parts[2]
-        item = await db.bs_get_content_item(cid)
+        cid = parts[2]; item = await db.bs_get_content_item(cid)
         if not item: return
-        sid    = context.user_data.get('ca_session_id','')
-        tlabel = dict(CONTENT_TYPES).get(item.get('type',''),'فایل')
+        sid = context.user_data.get('ca_session_id','')
+        tl  = dict(CONTENT_TYPES).get(item.get('type',''),'فایل')
         await query.edit_message_text(
-            f"⚠️ <b>حذف {tlabel}؟</b>\n{item.get('description','')[:40]}",
+            f"⚠️ <b>حذف {tl}؟</b>\n{item.get('description','')[:40]}",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🗑 حذف", callback_data=f'ca:confirm_del_content:{cid}')],
@@ -279,107 +256,107 @@ async def content_admin_callback(update: Update, context: ContextTypes.DEFAULT_T
             ]))
 
     elif action == 'confirm_del_content':
-        cid = parts[2]
-        await db.bs_delete_content(cid)
+        cid = parts[2]; await db.bs_delete_content(cid)
         sid = context.user_data.get('ca_session_id','')
-        await query.edit_message_text(
-            "✅ محتوا حذف شد.",
+        await query.edit_message_text("✅ محتوا حذف شد.",
             reply_markup=_back_btn("🔙 بازگشت", f'ca:session:{sid}'))
 
     # ══════════ رفرنس‌ها ══════════
 
-    elif action in ('refs', 'refs_admin'):
+    elif action in ('refs','refs_admin'):
         context.user_data['ca_ref_from_admin'] = from_admin
         await _show_ref_subjects(query, back=back_main)
 
-    # ─ افزودن درس رفرنس ─
+    # ─ ترتیب درس‌های رفرنس ─
+    elif action == 'ref_subject_up':
+        sid = parts[2]
+        await db.reorder_up('ref_subjects', sid, {})
+        fa = context.user_data.get('ca_ref_from_admin', False)
+        back = 'ca:refs_admin' if fa else 'ca:refs'
+        await _show_ref_subjects(query, back=back)
+
+    elif action == 'ref_subject_down':
+        sid = parts[2]
+        await db.reorder_down('ref_subjects', sid, {})
+        fa = context.user_data.get('ca_ref_from_admin', False)
+        back = 'ca:refs_admin' if fa else 'ca:refs'
+        await _show_ref_subjects(query, back=back)
+
     elif action == 'add_ref_subject_prompt':
         context.user_data['ca_mode'] = 'add_ref_subject'
-        fa   = context.user_data.get('ca_ref_from_admin', False)
+        fa = context.user_data.get('ca_ref_from_admin', False)
         back = 'ca:refs_admin' if fa else 'ca:refs'
         await query.edit_message_text(
-            "➕ <b>درس جدید برای رفرنس</b>\n\n"
-            "نام درس را بنویسید:\n"
-            "مثال: <code>فیزیولوژی</code>\n\n"
-            "⌨️ برای لغو: /cancel",
-            parse_mode='HTML',
-            reply_markup=_back_btn("❌ لغو", back))
+            "➕ <b>درس جدید</b>\n\nنام درس را بنویسید:\n⌨️ /cancel",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", back))
 
-    # ─ ویرایش درس رفرنس ─
     elif action == 'edit_ref_subject_prompt':
-        sid  = parts[2]
-        subj = await db.ref_get_subject(sid)
+        sid = parts[2]; subj = await db.ref_get_subject(sid)
         if not subj: return
-        context.user_data.update({'ca_mode': 'edit_ref_subject', 'ca_edit_target': sid})
+        context.user_data.update({'ca_mode':'edit_ref_subject','ca_edit_target':sid})
         await query.edit_message_text(
-            f"✏️ <b>ویرایش نام درس</b>\n\n"
-            f"نام فعلی: <b>{subj['name']}</b>\n\n"
-            "نام جدید را بنویسید:\n⌨️ برای لغو: /cancel",
-            parse_mode='HTML',
-            reply_markup=_back_btn("❌ لغو", f'ca:ref_subject:{sid}'))
+            f"✏️ <b>ویرایش نام درس</b>\n\nفعلی: <b>{subj['name']}</b>\n\nجدید:\n⌨️ /cancel",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:ref_subject:{sid}'))
 
-    # ─ حذف درس رفرنس ─
     elif action == 'del_ref_subject':
-        sid  = parts[2]
-        subj = await db.ref_get_subject(sid)
+        sid = parts[2]; subj = await db.ref_get_subject(sid)
         if not subj: return
-        fa   = context.user_data.get('ca_ref_from_admin', False)
+        fa = context.user_data.get('ca_ref_from_admin', False)
         back = 'ca:refs_admin' if fa else 'ca:refs'
         await query.edit_message_text(
-            f"⚠️ <b>حذف درس «{subj['name']}»؟</b>\n\nتمام کتاب‌ها و فایل‌ها هم حذف می‌شوند!",
+            f"⚠️ <b>حذف درس «{subj['name']}»؟</b>\nتمام کتاب‌ها و فایل‌ها حذف می‌شوند!",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🗑 بله، حذف کن", callback_data=f'ca:confirm_del_ref_subject:{sid}')],
-                [InlineKeyboardButton("❌ لغو",          callback_data=back)],
+                [InlineKeyboardButton("🗑 بله", callback_data=f'ca:confirm_del_ref_subject:{sid}')],
+                [InlineKeyboardButton("❌ لغو", callback_data=back)],
             ]))
 
     elif action == 'confirm_del_ref_subject':
-        sid = parts[2]
-        await db.ref_delete_subject(sid)
-        fa   = context.user_data.get('ca_ref_from_admin', False)
+        sid = parts[2]; await db.ref_delete_subject(sid)
+        fa = context.user_data.get('ca_ref_from_admin', False)
         back = 'ca:refs_admin' if fa else 'ca:refs'
-        await query.edit_message_text(
-            "✅ درس رفرنس حذف شد.",
-            reply_markup=_back_btn("🔙 بازگشت", back))
+        await query.edit_message_text("✅ درس حذف شد.", reply_markup=_back_btn("🔙 بازگشت", back))
 
     elif action == 'ref_subject':
-        sid  = parts[2]
-        context.user_data['ca_ref_subject_id'] = sid
-        fa   = context.user_data.get('ca_ref_from_admin', False)
+        sid = parts[2]; context.user_data['ca_ref_subject_id'] = sid
+        fa  = context.user_data.get('ca_ref_from_admin', False)
         back = 'ca:refs_admin' if fa else 'ca:refs'
         await _show_ref_books(query, context, sid, back=back)
 
-    # ─ افزودن کتاب ─
+    # ─ ترتیب کتاب‌های رفرنس ─
+    elif action == 'ref_book_up':
+        bid = parts[2]; sid = context.user_data.get('ca_ref_subject_id','')
+        await db.reorder_up('ref_books', bid, {'subject_id': sid})
+        fa = context.user_data.get('ca_ref_from_admin', False)
+        back = 'ca:refs_admin' if fa else 'ca:refs'
+        await _show_ref_books(query, context, sid, back=back)
+
+    elif action == 'ref_book_down':
+        bid = parts[2]; sid = context.user_data.get('ca_ref_subject_id','')
+        await db.reorder_down('ref_books', bid, {'subject_id': sid})
+        fa = context.user_data.get('ca_ref_from_admin', False)
+        back = 'ca:refs_admin' if fa else 'ca:refs'
+        await _show_ref_books(query, context, sid, back=back)
+
     elif action == 'add_ref_book_prompt':
-        sid  = parts[2]
+        sid = parts[2]
         context.user_data.update({'ca_ref_subject_id': sid, 'ca_mode': 'add_ref_book'})
         await query.edit_message_text(
-            "➕ <b>کتاب/رفرنس جدید</b>\n\n"
-            "نام کتاب را بنویسید:\n"
-            "مثال: <code>Guyton Physiology</code>\n\n"
-            "⌨️ برای لغو: /cancel",
-            parse_mode='HTML',
-            reply_markup=_back_btn("❌ لغو", f'ca:ref_subject:{sid}'))
+            "➕ <b>کتاب جدید</b>\n\nنام کتاب را بنویسید:\n⌨️ /cancel",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:ref_subject:{sid}'))
 
-    # ─ ویرایش کتاب ─
     elif action == 'edit_ref_book_prompt':
-        bid  = parts[2]
-        book = await db.ref_get_book(bid)
+        bid = parts[2]; book = await db.ref_get_book(bid)
         if not book: return
-        context.user_data.update({'ca_mode': 'edit_ref_book', 'ca_edit_target': bid})
+        context.user_data.update({'ca_mode':'edit_ref_book','ca_edit_target':bid})
         await query.edit_message_text(
-            f"✏️ <b>ویرایش نام کتاب</b>\n\n"
-            f"نام فعلی: <b>{book['name']}</b>\n\n"
-            "نام جدید را بنویسید:\n⌨️ برای لغو: /cancel",
-            parse_mode='HTML',
-            reply_markup=_back_btn("❌ لغو", f'ca:ref_book:{bid}'))
+            f"✏️ <b>ویرایش نام کتاب</b>\n\nفعلی: <b>{book['name']}</b>\n\nجدید:\n⌨️ /cancel",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:ref_book:{bid}'))
 
-    # ─ حذف کتاب ─
     elif action == 'del_ref_book':
-        bid  = parts[2]
-        book = await db.ref_get_book(bid)
+        bid = parts[2]; book = await db.ref_get_book(bid)
         if not book: return
-        sid  = context.user_data.get('ca_ref_subject_id','')
+        sid = context.user_data.get('ca_ref_subject_id','')
         await query.edit_message_text(
             f"⚠️ <b>حذف رفرنس «{book['name']}»؟</b>",
             parse_mode='HTML',
@@ -389,36 +366,47 @@ async def content_admin_callback(update: Update, context: ContextTypes.DEFAULT_T
             ]))
 
     elif action == 'confirm_del_ref_book':
-        bid = parts[2]
-        await db.ref_delete_book(bid)
+        bid = parts[2]; await db.ref_delete_book(bid)
         sid = context.user_data.get('ca_ref_subject_id','')
-        await query.edit_message_text(
-            "✅ رفرنس حذف شد.",
+        await query.edit_message_text("✅ رفرنس حذف شد.",
             reply_markup=_back_btn("🔙 بازگشت", f'ca:ref_subject:{sid}'))
 
     elif action == 'ref_book':
-        bid  = parts[2]
-        context.user_data['ca_ref_book_id'] = bid
+        bid = parts[2]; context.user_data['ca_ref_book_id'] = bid
         await _show_ref_book_files(query, context, bid)
 
-    # ─ آپلود فایل رفرنس ─
-    elif action == 'upload_ref':
-        bid  = parts[2]
-        lang = parts[3]
-        context.user_data.update({'ca_ref_book_id': bid, 'ca_ref_lang': lang, 'ca_mode': 'waiting_ref_file'})
-        ll   = "🇮🇷 فارسی" if lang == 'fa' else "🌐 لاتین"
+    # ─ آپلود جلد رفرنس ─
+    elif action == 'upload_ref_volume_prompt':
+        bid  = parts[2]; lang = parts[3]
+        context.user_data.update({'ca_ref_book_id': bid, 'ca_ref_lang': lang})
+        # شمارش جلدهای موجود برای این زبان
+        files = await db.ref_get_files(bid)
+        existing_vols = [f['volume'] for f in files if f.get('lang') == lang]
+        next_vol = max(existing_vols, default=0) + 1
+        context.user_data['ca_ref_volume'] = next_vol
+        ll = "🇮🇷 فارسی" if lang == 'fa' else "🌐 لاتین"
+        context.user_data['ca_mode'] = 'waiting_ref_file'
         await query.edit_message_text(
-            f"📤 <b>آپلود {ll}</b>\n\nفایل PDF را ارسال کنید:\n⌨️ برای لغو: /cancel",
-            parse_mode='HTML',
-            reply_markup=_back_btn("❌ لغو", f'ca:ref_book:{bid}'))
+            f"📤 <b>آپلود {ll} — جلد {next_vol}</b>\n\n"
+            f"فایل PDF را ارسال کنید:\n⌨️ /cancel",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:ref_book:{bid}'))
+        return CA_WAITING_FILE
+
+    elif action == 'upload_ref':
+        # جایگزین کردن یک جلد موجود
+        bid = parts[2]; lang = parts[3]; vol = int(parts[4])
+        context.user_data.update({'ca_ref_book_id':bid,'ca_ref_lang':lang,
+                                  'ca_ref_volume':vol,'ca_mode':'waiting_ref_file'})
+        ll = "🇮🇷 فارسی" if lang == 'fa' else "🌐 لاتین"
+        await query.edit_message_text(
+            f"🔄 <b>جایگزین {ll} جلد {vol}</b>\n\nفایل جدید ارسال کنید:\n⌨️ /cancel",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:ref_book:{bid}'))
         return CA_WAITING_FILE
 
     elif action == 'del_ref_file':
-        fid = parts[2]
-        await db.ref_delete_file(fid)
-        bid  = context.user_data.get('ca_ref_book_id','')
-        await query.edit_message_text(
-            "✅ فایل حذف شد.",
+        fid = parts[2]; await db.ref_delete_file(fid)
+        bid = context.user_data.get('ca_ref_book_id','')
+        await query.edit_message_text("✅ فایل حذف شد.",
             reply_markup=_back_btn("🔙 بازگشت", f'ca:ref_book:{bid}'))
 
     # ══════════ FAQ ══════════
@@ -430,15 +418,11 @@ async def content_admin_callback(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data['ca_mode'] = 'add_faq'
         await query.edit_message_text(
             "➕ <b>سوال متداول جدید</b>\n\n"
-            "📝 فرمت: <code>سوال | جواب | دسته‌بندی</code>\n"
-            "مثال: <code>نحوه دانلود؟ | روی دانلود کلیک کنید | ⚙️ مشکلات فنی</code>\n\n"
-            "⌨️ برای لغو: /cancel",
-            parse_mode='HTML',
-            reply_markup=_back_btn("❌ لغو", 'ca:faq'))
+            "فرمت: <code>سوال | جواب | دسته</code>\n⌨️ /cancel",
+            parse_mode='HTML', reply_markup=_back_btn("❌ لغو", 'ca:faq'))
 
     elif action == 'del_faq':
-        await db.faq_delete(parts[2])
-        await _show_faq(query)
+        await db.faq_delete(parts[2]); await _show_faq(query)
 
 
 # ══════════════════════════════════════════════════════════
@@ -451,8 +435,7 @@ async def _show_main(query):
         [InlineKeyboardButton("📚 مدیریت رفرنس‌ها",  callback_data='ca:refs')],
         [InlineKeyboardButton("❓ مدیریت FAQ",         callback_data='ca:faq')],
     ]
-    await query.edit_message_text(
-        "🎓 <b>پنل ادمین محتوا</b>",
+    await query.edit_message_text("🎓 <b>پنل ادمین محتوا</b>",
         parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -464,8 +447,7 @@ async def _show_terms(query, back='ca:main'):
             row.append(InlineKeyboardButton(f"📘 {TERMS[i+1]}", callback_data=f'ca:term:{i+1}'))
         kb.append(row)
     kb.append([InlineKeyboardButton("🔙 بازگشت", callback_data=back)])
-    await query.edit_message_text(
-        "📘 <b>انتخاب ترم — علوم پایه</b>",
+    await query.edit_message_text("📘 <b>انتخاب ترم — علوم پایه</b>",
         parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -473,19 +455,28 @@ async def _show_lessons(query, context, term, back='ca:terms'):
     lessons = await db.bs_get_lessons(term)
     idx     = context.user_data.get('ca_term_idx', 0)
     kb = []
-    for l in lessons:
+    for i, l in enumerate(lessons):
         lid = str(l['_id'])
         t   = f" | {l['teacher']}" if l.get('teacher') else ''
+        # ردیف اصلی
         kb.append([
             InlineKeyboardButton(f"📖 {l['name']}{t}", callback_data=f'ca:lesson:{lid}'),
-            InlineKeyboardButton("✏️",  callback_data=f'ca:edit_lesson_menu:{lid}'),
-            InlineKeyboardButton("🗑",   callback_data=f'ca:del_lesson:{lid}'),
+            InlineKeyboardButton("✏️", callback_data=f'ca:edit_lesson_menu:{lid}'),
+            InlineKeyboardButton("🗑",  callback_data=f'ca:del_lesson:{lid}'),
         ])
-    kb.append([InlineKeyboardButton(f"➕ درس جدید",  callback_data=f'ca:add_lesson_prompt:{idx}')])
-    kb.append([InlineKeyboardButton("🔙 بازگشت",     callback_data=back)])
+        # ردیف ترتیب
+        nav = []
+        if i > 0:
+            nav.append(InlineKeyboardButton("⬆️ بالاتر", callback_data=f'ca:lesson_up:{lid}'))
+        if i < len(lessons) - 1:
+            nav.append(InlineKeyboardButton("⬇️ پایین‌تر", callback_data=f'ca:lesson_down:{lid}'))
+        if nav:
+            kb.append(nav)
+    kb.append([InlineKeyboardButton("➕ درس جدید", callback_data=f'ca:add_lesson_prompt:{idx}')])
+    kb.append([InlineKeyboardButton("🔙 بازگشت",   callback_data=back)])
     await query.edit_message_text(
         f"📘 <b>{term}</b> — {len(lessons)} درس\n"
-        "<i>✏️=ویرایش  🗑=حذف</i>",
+        "<i>✏️=ویرایش  🗑=حذف  ⬆️⬇️=ترتیب</i>",
         parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -498,15 +489,14 @@ async def _show_sessions(query, context, lid):
         sid = str(s['_id'])
         kb.append([
             InlineKeyboardButton(f"📌 {s['number']} — {s.get('topic','')[:22]}", callback_data=f'ca:session:{sid}'),
-            InlineKeyboardButton("✏️",  callback_data=f'ca:edit_session_menu:{sid}'),
-            InlineKeyboardButton("🗑",   callback_data=f'ca:del_session:{sid}'),
+            InlineKeyboardButton("✏️", callback_data=f'ca:edit_session_menu:{sid}'),
+            InlineKeyboardButton("🗑",  callback_data=f'ca:del_session:{sid}'),
         ])
     kb.append([InlineKeyboardButton("➕ جلسه جدید", callback_data=f'ca:add_session_prompt:{lid}')])
     kb.append([InlineKeyboardButton("🔙 بازگشت",    callback_data=f'ca:term:{idx}')])
     lname = lesson.get('name','') if lesson else ''
     await query.edit_message_text(
-        f"📖 <b>{lname}</b> — {len(sessions)} جلسه\n"
-        "<i>✏️=ویرایش  🗑=حذف</i>",
+        f"📖 <b>{lname}</b> — {len(sessions)} جلسه\n<i>✏️=ویرایش  🗑=حذف</i>",
         parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -516,22 +506,43 @@ async def _show_session_content(query, context, sid):
     lid      = context.user_data.get('ca_lesson_id','')
     ICONS    = dict(CONTENT_TYPES)
     kb = []
-    for c in contents:
-        cid   = str(c['_id'])
+    for i, c in enumerate(contents):
+        cid  = str(c['_id'])
         ctype = c.get('type','pdf')
-        desc  = c.get('description','')[:20]
+        desc  = c.get('description','')[:18] or f'فایل {i+1}'
+        # ردیف فایل
         kb.append([
             InlineKeyboardButton(f"{ICONS.get(ctype,'📎')} {desc}", callback_data=f'ca:session:{sid}'),
             InlineKeyboardButton("🗑", callback_data=f'ca:del_content:{cid}'),
         ])
-    kb.append([InlineKeyboardButton("📤 آپلود محتوا",        callback_data=f'ca:upload_content:{sid}')])
+        # ردیف ترتیب
+        nav = []
+        if i > 0:
+            nav.append(InlineKeyboardButton("⬆️", callback_data=f'ca:content_up:{cid}'))
+        if i < len(contents) - 1:
+            nav.append(InlineKeyboardButton("⬇️", callback_data=f'ca:content_down:{cid}'))
+        if nav:
+            kb.append(nav)
+
+    if not contents:
+        kb.append([InlineKeyboardButton("📤 آپلود اولین فایل", callback_data=f'ca:upload_content:{sid}')])
+    else:
+        kb.append([InlineKeyboardButton("📤 ➕ افزودن فایل جدید", callback_data=f'ca:upload_content:{sid}')])
     kb.append([InlineKeyboardButton("✏️ ویرایش اطلاعات جلسه", callback_data=f'ca:edit_session_menu:{sid}')])
     kb.append([InlineKeyboardButton("🔙 بازگشت",              callback_data=f'ca:lesson:{lid}')])
+
+    by_type = {}
+    for c in contents:
+        by_type.setdefault(c.get('type','pdf'), []).append(c)
+    summary = '  '.join(f"{ICONS.get(t,'📎')}×{len(v)}" for t,v in by_type.items()) if by_type else '❌ بدون فایل'
+
     if session:
         header = (f"📌 <b>جلسه {session.get('number','')}</b>\n"
                   f"📚 {session.get('topic','')}\n"
                   f"👨‍🏫 {session.get('teacher','') or 'ثبت نشده'}\n"
-                  f"━━━━━━━━━━━━━━━━\n{len(contents)} فایل:")
+                  f"━━━━━━━━━━━━━━━━\n"
+                  f"📁 {len(contents)} فایل: {summary}\n"
+                  f"<i>⬆️⬇️=ترتیب  🗑=حذف</i>")
     else:
         header = "📌 جلسه"
     await query.edit_message_text(header, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
@@ -540,18 +551,24 @@ async def _show_session_content(query, context, sid):
 async def _show_ref_subjects(query, back='ca:main'):
     subjects = await db.ref_get_subjects()
     kb = []
-    for s in subjects:
+    for i, s in enumerate(subjects):
         sid = str(s['_id'])
         kb.append([
             InlineKeyboardButton(f"📖 {s['name']}", callback_data=f'ca:ref_subject:{sid}'),
-            InlineKeyboardButton("✏️",  callback_data=f'ca:edit_ref_subject_prompt:{sid}'),
-            InlineKeyboardButton("🗑",   callback_data=f'ca:del_ref_subject:{sid}'),
+            InlineKeyboardButton("✏️", callback_data=f'ca:edit_ref_subject_prompt:{sid}'),
+            InlineKeyboardButton("🗑",  callback_data=f'ca:del_ref_subject:{sid}'),
         ])
+        nav = []
+        if i > 0:
+            nav.append(InlineKeyboardButton("⬆️ بالاتر", callback_data=f'ca:ref_subject_up:{sid}'))
+        if i < len(subjects) - 1:
+            nav.append(InlineKeyboardButton("⬇️ پایین‌تر", callback_data=f'ca:ref_subject_down:{sid}'))
+        if nav:
+            kb.append(nav)
     kb.append([InlineKeyboardButton("➕ درس جدید", callback_data='ca:add_ref_subject_prompt')])
     kb.append([InlineKeyboardButton("🔙 بازگشت",   callback_data=back)])
     await query.edit_message_text(
-        f"📚 <b>رفرنس‌ها</b> — {len(subjects)} درس\n"
-        "<i>✏️=ویرایش نام  🗑=حذف کامل</i>",
+        f"📚 <b>رفرنس‌ها</b> — {len(subjects)} درس\n<i>✏️=ویرایش  🗑=حذف  ⬆️⬇️=ترتیب</i>",
         parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -559,44 +576,61 @@ async def _show_ref_books(query, context, sid, back='ca:refs'):
     subj  = await db.ref_get_subject(sid)
     books = await db.ref_get_books(sid)
     kb = []
-    for b in books:
+    for i, b in enumerate(books):
         bid = str(b['_id'])
         kb.append([
             InlineKeyboardButton(f"📘 {b['name']}", callback_data=f'ca:ref_book:{bid}'),
-            InlineKeyboardButton("✏️",  callback_data=f'ca:edit_ref_book_prompt:{bid}'),
-            InlineKeyboardButton("🗑",   callback_data=f'ca:del_ref_book:{bid}'),
+            InlineKeyboardButton("✏️", callback_data=f'ca:edit_ref_book_prompt:{bid}'),
+            InlineKeyboardButton("🗑",  callback_data=f'ca:del_ref_book:{bid}'),
         ])
+        nav = []
+        if i > 0:
+            nav.append(InlineKeyboardButton("⬆️ بالاتر", callback_data=f'ca:ref_book_up:{bid}'))
+        if i < len(books) - 1:
+            nav.append(InlineKeyboardButton("⬇️ پایین‌تر", callback_data=f'ca:ref_book_down:{bid}'))
+        if nav:
+            kb.append(nav)
     kb.append([InlineKeyboardButton("➕ کتاب جدید", callback_data=f'ca:add_ref_book_prompt:{sid}')])
     kb.append([InlineKeyboardButton("🔙 بازگشت",    callback_data=back)])
     name = subj.get('name','') if subj else ''
     await query.edit_message_text(
-        f"📖 <b>{name}</b> — {len(books)} رفرنس\n"
-        "<i>✏️=ویرایش نام  🗑=حذف کامل</i>",
+        f"📖 <b>{name}</b> — {len(books)} رفرنس\n<i>✏️=ویرایش  🗑=حذف  ⬆️⬇️=ترتیب</i>",
         parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def _show_ref_book_files(query, context, bid):
     book    = await db.ref_get_book(bid)
     files   = await db.ref_get_files(bid)
-    langs   = {f['lang']: f for f in files}
     sid     = context.user_data.get('ca_ref_subject_id','')
     kb      = []
-    for lang, label in [('fa','🇮🇷 فارسی'), ('en','🌐 لاتین')]:
-        if lang in langs:
-            fid = str(langs[lang]['_id'])
-            dl  = langs[lang].get('downloads', 0)
+
+    # گروه‌بندی بر اساس زبان
+    fa_files = sorted([f for f in files if f.get('lang') == 'fa'], key=lambda x: x.get('volume',1))
+    en_files = sorted([f for f in files if f.get('lang') == 'en'], key=lambda x: x.get('volume',1))
+
+    for lang, items, label_prefix in [('fa', fa_files, '🇮🇷 فارسی'), ('en', en_files, '🌐 لاتین')]:
+        for f in items:
+            fid = str(f['_id']); vol = f.get('volume',1); dl = f.get('downloads',0)
+            desc = f.get('description','')
+            row_label = f"✅ {label_prefix} جلد {vol}" + (f" — {desc[:15]}" if desc else '') + f"  ⬇️{dl}"
             kb.append([
-                InlineKeyboardButton(f"✅ {label}  ⬇️{dl}", callback_data=f'ca:ref_book:{bid}'),
-                InlineKeyboardButton("🔄 جایگزین",           callback_data=f'ca:upload_ref:{bid}:{lang}'),
-                InlineKeyboardButton("🗑",                    callback_data=f'ca:del_ref_file:{fid}'),
+                InlineKeyboardButton(row_label, callback_data=f'ca:ref_book:{bid}'),
+                InlineKeyboardButton("🔄", callback_data=f'ca:upload_ref:{bid}:{lang}:{vol}'),
+                InlineKeyboardButton("🗑", callback_data=f'ca:del_ref_file:{fid}'),
             ])
-        else:
-            kb.append([InlineKeyboardButton(f"📤 آپلود {label}", callback_data=f'ca:upload_ref:{bid}:{lang}')])
+        # دکمه افزودن جلد جدید
+        kb.append([InlineKeyboardButton(
+            f"📤 ➕ جلد جدید {label_prefix}",
+            callback_data=f'ca:upload_ref_volume_prompt:{bid}:{lang}'
+        )])
+
     kb.append([InlineKeyboardButton("✏️ ویرایش نام کتاب", callback_data=f'ca:edit_ref_book_prompt:{bid}')])
     kb.append([InlineKeyboardButton("🔙 بازگشت",           callback_data=f'ca:ref_subject:{sid}')])
     name = book.get('name','') if book else ''
     await query.edit_message_text(
-        f"📘 <b>{name}</b>\n\nمدیریت فایل‌های PDF:",
+        f"📘 <b>{name}</b>\n"
+        f"📁 {len(files)} فایل\n\n"
+        "🔄=جایگزین  🗑=حذف  ➕=جلد جدید",
         parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -624,12 +658,12 @@ async def ca_file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid     = update.effective_user.id
     if not await db.is_content_admin(uid): return
     ca_mode = context.user_data.get('ca_mode','')
-    if ca_mode not in ('waiting_file', 'waiting_ref_file'): return
+    if ca_mode not in ('waiting_file','waiting_ref_file'): return
 
     file_obj = (update.message.document or update.message.video or
                 update.message.audio    or update.message.voice)
     if not file_obj:
-        await update.message.reply_text("❌ فایل معتبر ارسال کنید.\n⌨️ /cancel برای لغو")
+        await update.message.reply_text("❌ فایل معتبر ارسال کنید.\n⌨️ /cancel")
         return CA_WAITING_FILE
 
     fid = file_obj.file_id
@@ -637,27 +671,33 @@ async def ca_file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ca_mode == 'waiting_ref_file':
         bid  = context.user_data.get('ca_ref_book_id','')
         lang = context.user_data.get('ca_ref_lang','fa')
-        await db.ref_add_file(bid, lang, fid)
+        vol  = context.user_data.get('ca_ref_volume', 1)
         ll   = "🇮🇷 فارسی" if lang == 'fa' else "🌐 لاتین"
-        _clear(context)
+        # بپرس توضیح اضافه بخواد بده
+        context.user_data.update({'ca_pending_file': fid, 'ca_mode': 'waiting_ref_description'})
         await update.message.reply_text(
-            f"✅ فایل {ll} آپلود شد!",
-            reply_markup=_back_btn("🔙 برگشت", f'ca:ref_book:{bid}'))
-        return
+            f"✅ فایل {ll} جلد {vol} دریافت شد!\n\n"
+            "📝 توضیح اختیاری (مثلاً: ویرایش سوم):\n"
+            "اگر توضیحی ندارید <code>-</code> بزنید:\n⌨️ /cancel",
+            parse_mode='HTML',
+            reply_markup=_back_btn("❌ لغو (بدون توضیح)", f'ca:ref_book:{bid}'))
+        return CA_WAITING_TEXT
 
+    # فایل محتوای جلسه
     context.user_data.update({'ca_pending_file': fid, 'ca_mode': 'waiting_description'})
     sid = context.user_data.get('ca_session_id','')
     await update.message.reply_text(
         "✅ فایل دریافت شد!\n\n"
-        "📝 توضیح کوتاه بنویسید (یا <code>-</code> برای بدون توضیح):\n"
-        "⌨️ /cancel برای لغو",
+        "📝 توضیح اختیاری برای این فایل:\n"
+        "(مثلاً: ویدیو قسمت اول — فیزیولوژی کلیه)\n"
+        "اگر توضیحی ندارید <code>-</code> بزنید:\n⌨️ /cancel",
         parse_mode='HTML',
         reply_markup=_back_btn("❌ لغو", f'ca:session:{sid}'))
     return CA_WAITING_TEXT
 
 
 # ══════════════════════════════════════════════════════════
-#  هندلر متن — با /cancel کامل
+#  هندلر متن
 # ══════════════════════════════════════════════════════════
 
 async def ca_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -666,137 +706,119 @@ async def ca_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ca_mode = context.user_data.get('ca_mode','')
     text    = update.message.text.strip()
 
-    # ── لغو در هر مرحله ──
-    if text.lower() in ('/cancel', 'لغو', '❌ لغو', 'cancel'):
+    if text.lower() in ('/cancel','لغو','❌ لغو','cancel'):
         _clear(context)
-        await update.message.reply_text(
-            "✅ عملیات لغو شد.\n\nبرای ادامه از دکمه‌های ربات استفاده کنید.")
+        await update.message.reply_text("✅ عملیات لغو شد.")
         return ConversationHandler.END
 
-    # ── افزودن درس علوم پایه ──
     if ca_mode == 'add_lesson':
-        ps      = [p.strip() for p in text.split(',')]
-        name    = ps[0]
-        teacher = ps[1] if len(ps) > 1 else ''
-        term    = context.user_data.get('ca_term','')
-        idx     = context.user_data.get('ca_term_idx', 0)
-        result  = await db.bs_add_lesson(term, name, teacher)
+        ps = [p.strip() for p in text.split(',')]
+        name = ps[0]; teacher = ps[1] if len(ps) > 1 else ''
+        term = context.user_data.get('ca_term',''); idx = context.user_data.get('ca_term_idx',0)
+        result = await db.bs_add_lesson(term, name, teacher)
         _clear(context)
-        msg = f"✅ درس «{name}» به {term} اضافه شد!" if result else "⚠️ این درس قبلاً وجود دارد."
-        await update.message.reply_text(msg, reply_markup=_back_btn("🔙 برگشت به ترم", f'ca:term:{idx}'))
+        msg = f"✅ درس «{name}» اضافه شد!" if result else "⚠️ این درس قبلاً وجود دارد."
+        await update.message.reply_text(msg, reply_markup=_back_btn("🔙 برگشت", f'ca:term:{idx}'))
 
-    # ── ویرایش درس علوم پایه ──
     elif ca_mode == 'edit_lesson':
-        lid   = context.user_data.get('ca_edit_target','')
-        field = context.user_data.get('ca_edit_field','')
-        ok    = await db.bs_update_lesson(lid, {field: text})
+        lid = context.user_data.get('ca_edit_target',''); field = context.user_data.get('ca_edit_field','')
+        ok = await db.bs_update_lesson(lid, {field: text})
         _clear(context)
-        msg = "✅ ویرایش ذخیره شد." if ok else "❌ خطا در ویرایش."
-        await update.message.reply_text(msg, reply_markup=_back_btn("🔙 برگشت", f'ca:lesson:{lid}'))
+        await update.message.reply_text("✅ ذخیره شد." if ok else "❌ خطا.",
+            reply_markup=_back_btn("🔙 برگشت", f'ca:lesson:{lid}'))
 
-    # ── افزودن جلسه ──
     elif ca_mode == 'add_session':
         ps  = [p.strip() for p in text.split(',')]
         lid = context.user_data.get('ca_lesson_id','')
         if len(ps) < 2:
             await update.message.reply_text(
-                "❌ <b>فرمت اشتباه!</b>\n\n"
-                "📝 باید اینطوری بنویسی:\n"
-                "<code>شماره, موضوع, استاد</code>\n"
-                "مثال: <code>3, فیزیولوژی کلیه, دکتر احمدی</code>\n\n"
-                "⌨️ /cancel برای لغو کامل",
-                parse_mode='HTML',
-                reply_markup=_back_btn("❌ لغو کامل", f'ca:lesson:{lid}'))
+                "❌ فرمت اشتباه!\nمثال: <code>3, فیزیولوژی کلیه, دکتر احمدی</code>\n⌨️ /cancel",
+                parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:lesson:{lid}'))
             return CA_WAITING_TEXT
         try:    number = int(ps[0])
         except:
-            sessions = await db.bs_get_sessions(lid)
-            number   = len(sessions) + 1
-        topic   = ps[1]
-        teacher = ps[2] if len(ps) > 2 else ''
+            sessions = await db.bs_get_sessions(lid); number = len(sessions) + 1
+        topic = ps[1]; teacher = ps[2] if len(ps) > 2 else ''
         await db.bs_add_session(lid, number, topic, teacher)
         _clear(context)
-        await update.message.reply_text(
-            f"✅ جلسه {number} — «{topic}» اضافه شد!",
-            reply_markup=_back_btn("🔙 برگشت به درس", f'ca:lesson:{lid}'))
+        await update.message.reply_text(f"✅ جلسه {number} — «{topic}» اضافه شد!",
+            reply_markup=_back_btn("🔙 برگشت", f'ca:lesson:{lid}'))
 
-    # ── ویرایش جلسه ──
     elif ca_mode == 'edit_session':
-        sid   = context.user_data.get('ca_edit_target','')
-        field = context.user_data.get('ca_edit_field','')
-        val   = int(text) if field == 'number' and text.isdigit() else text
-        ok    = await db.bs_update_session(sid, {field: val})
+        sid = context.user_data.get('ca_edit_target',''); field = context.user_data.get('ca_edit_field','')
+        val = int(text) if field == 'number' and text.isdigit() else text
+        ok  = await db.bs_update_session(sid, {field: val})
         _clear(context)
-        msg = "✅ جلسه ویرایش شد." if ok else "❌ خطا در ویرایش."
-        await update.message.reply_text(msg, reply_markup=_back_btn("🔙 برگشت", f'ca:session:{sid}'))
+        await update.message.reply_text("✅ جلسه ویرایش شد." if ok else "❌ خطا.",
+            reply_markup=_back_btn("🔙 برگشت", f'ca:session:{sid}'))
 
-    # ── توضیح فایل ──
     elif ca_mode == 'waiting_description':
         desc = '' if text == '-' else text
         fid  = context.user_data.get('ca_pending_file','')
         sid  = context.user_data.get('ca_session_id','')
         ct   = context.user_data.get('ca_content_type','pdf')
-        await db.bs_add_content(sid, ct, fid, desc)
-        tl   = dict(CONTENT_TYPES).get(ct, ct)
+        await db.bs_add_content(sid, ct, fid, description=desc)
+        tl = dict(CONTENT_TYPES).get(ct, ct)
+        _clear(context)
+        await update.message.reply_text(f"✅ {tl} اضافه شد!",
+            reply_markup=_back_btn("🔙 برگشت", f'ca:session:{sid}'))
+
+    elif ca_mode == 'waiting_ref_description':
+        desc  = '' if text == '-' else text
+        fid   = context.user_data.get('ca_pending_file','')
+        bid   = context.user_data.get('ca_ref_book_id','')
+        lang  = context.user_data.get('ca_ref_lang','fa')
+        vol   = context.user_data.get('ca_ref_volume', 1)
+        await db.ref_add_file(bid, lang, fid, volume=vol, description=desc)
+        ll = "🇮🇷 فارسی" if lang == 'fa' else "🌐 لاتین"
         _clear(context)
         await update.message.reply_text(
-            f"✅ {tl} اضافه شد!",
-            reply_markup=_back_btn("🔙 برگشت به جلسه", f'ca:session:{sid}'))
+            f"✅ {ll} جلد {vol} آپلود شد!" + (f"\n📝 {desc}" if desc else ''),
+            reply_markup=_back_btn("🔙 برگشت", f'ca:ref_book:{bid}'))
 
-    # ── افزودن درس رفرنس ──
     elif ca_mode == 'add_ref_subject':
         result = await db.ref_add_subject(text)
-        fa     = context.user_data.get('ca_ref_from_admin', False)
-        back   = 'ca:refs_admin' if fa else 'ca:refs'
+        fa = context.user_data.get('ca_ref_from_admin', False)
+        back = 'ca:refs_admin' if fa else 'ca:refs'
         _clear(context)
-        msg = f"✅ درس «{text}» اضافه شد!" if result else "⚠️ این درس قبلاً وجود دارد."
-        await update.message.reply_text(msg, reply_markup=_back_btn("🔙 برگشت به رفرنس‌ها", back))
+        await update.message.reply_text(
+            f"✅ درس «{text}» اضافه شد!" if result else "⚠️ قبلاً وجود دارد.",
+            reply_markup=_back_btn("🔙 برگشت", back))
 
-    # ── ویرایش درس رفرنس ──
     elif ca_mode == 'edit_ref_subject':
         sid = context.user_data.get('ca_edit_target','')
         ok  = await db.ref_update_subject(sid, {'name': text})
         _clear(context)
-        msg = f"✅ نام درس به «{text}» تغییر یافت." if ok else "❌ خطا در ویرایش."
-        await update.message.reply_text(msg, reply_markup=_back_btn("🔙 برگشت", f'ca:ref_subject:{sid}'))
+        await update.message.reply_text(f"✅ نام به «{text}» تغییر یافت." if ok else "❌ خطا.",
+            reply_markup=_back_btn("🔙 برگشت", f'ca:ref_subject:{sid}'))
 
-    # ── افزودن کتاب ──
     elif ca_mode == 'add_ref_book':
         sid = context.user_data.get('ca_ref_subject_id','')
         await db.ref_add_book(sid, text)
         _clear(context)
-        await update.message.reply_text(
-            f"✅ رفرنس «{text}» اضافه شد!",
+        await update.message.reply_text(f"✅ رفرنس «{text}» اضافه شد!",
             reply_markup=_back_btn("🔙 برگشت", f'ca:ref_subject:{sid}'))
 
-    # ── ویرایش کتاب ──
     elif ca_mode == 'edit_ref_book':
         bid = context.user_data.get('ca_edit_target','')
         ok  = await db.ref_update_book(bid, {'name': text})
         _clear(context)
-        msg = f"✅ نام کتاب به «{text}» تغییر یافت." if ok else "❌ خطا در ویرایش."
-        await update.message.reply_text(msg, reply_markup=_back_btn("🔙 برگشت", f'ca:ref_book:{bid}'))
+        await update.message.reply_text(f"✅ نام کتاب به «{text}» تغییر یافت." if ok else "❌ خطا.",
+            reply_markup=_back_btn("🔙 برگشت", f'ca:ref_book:{bid}'))
 
-    # ── افزودن FAQ ──
     elif ca_mode == 'add_faq':
         ps = [p.strip() for p in text.split('|')]
         if len(ps) < 2:
             await update.message.reply_text(
-                "❌ <b>فرمت اشتباه!</b>\n\n"
-                "📝 فرمت: <code>سوال | جواب | دسته</code>\n"
-                "⌨️ /cancel برای لغو",
-                parse_mode='HTML')
-            return CA_WAITING_TEXT
-        question = ps[0]; answer = ps[1]
-        category = ps[2] if len(ps) > 2 else 'عمومی'
+                "❌ فرمت اشتباه!\nمثال: <code>سوال | جواب | دسته</code>\n⌨️ /cancel",
+                parse_mode='HTML'); return CA_WAITING_TEXT
+        question = ps[0]; answer = ps[1]; category = ps[2] if len(ps) > 2 else 'عمومی'
         await db.faq_add(question, answer, category)
         _clear(context)
-        await update.message.reply_text(
-            f"✅ سوال در «{category}» اضافه شد!",
-            reply_markup=_back_btn("🔙 برگشت به FAQ", 'ca:faq'))
+        await update.message.reply_text(f"✅ سوال اضافه شد!",
+            reply_markup=_back_btn("🔙 برگشت", 'ca:faq'))
 
     else:
-        # اگر هیچ mode ای نبود، لغو کن
         _clear(context)
-        await update.message.reply_text("⚠️ عملیات نامشخص. لطفاً از منوی ربات استفاده کنید.")
+        await update.message.reply_text("⚠️ لطفاً از منوی ربات استفاده کنید.")
         return ConversationHandler.END
