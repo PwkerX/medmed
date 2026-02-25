@@ -118,10 +118,11 @@ class DB:
         except: pass
 
     async def bs_get_content(self, session_id):
-        return await self.bs_content.find({'session_id': session_id}).sort('uploaded_at', 1).to_list(50)
+        return await self.bs_content.find({'session_id': session_id}).sort('order', 1).to_list(50)
 
-    async def bs_add_content(self, session_id, ctype, file_id, description=''):
-        r = await self.bs_content.insert_one({'session_id': session_id, 'type': ctype, 'file_id': file_id, 'description': description, 'uploaded_at': datetime.now().isoformat(), 'downloads': 0})
+    async def bs_add_content(self, session_id, ctype, file_id, description='', extra_info=''):
+        count = await self.bs_content.count_documents({'session_id': session_id})
+        r = await self.bs_content.insert_one({'session_id': session_id, 'type': ctype, 'file_id': file_id, 'description': description, 'extra_info': extra_info, 'order': count, 'uploaded_at': datetime.now().isoformat(), 'downloads': 0})
         return r.inserted_id
 
     async def bs_delete_content(self, cid):
@@ -159,6 +160,73 @@ class DB:
     async def ref_update_book(self, book_id, data: dict):
         try:
             await self.ref_books.update_one({'_id': ObjectId(book_id)}, {'$set': data})
+            return True
+        except: return False
+
+
+    # ════ ترتیب‌بندی (Reorder) ════
+
+    async def reorder_up(self, collection, doc_id, query_filter):
+        """یک آیتم رو یه پله بالاتر بیار"""
+        from bson import ObjectId as OID
+        try:
+            col  = getattr(self, collection)
+            item = await col.find_one({'_id': OID(doc_id)})
+            if not item: return False
+            cur_order = item.get('order', 0)
+            if cur_order == 0: return False
+            prev = await col.find_one({**query_filter, 'order': cur_order - 1})
+            if prev:
+                await col.update_one({'_id': item['_id']},  {'$set': {'order': cur_order - 1}})
+                await col.update_one({'_id': prev['_id']},  {'$set': {'order': cur_order}})
+            return True
+        except Exception as e:
+            return False
+
+    async def reorder_down(self, collection, doc_id, query_filter):
+        """یک آیتم رو یه پله پایین‌تر ببر"""
+        from bson import ObjectId as OID
+        try:
+            col   = getattr(self, collection)
+            item  = await col.find_one({'_id': OID(doc_id)})
+            if not item: return False
+            cur_order = item.get('order', 0)
+            total = await col.count_documents(query_filter)
+            if cur_order >= total - 1: return False
+            nxt = await col.find_one({**query_filter, 'order': cur_order + 1})
+            if nxt:
+                await col.update_one({'_id': item['_id']}, {'$set': {'order': cur_order + 1}})
+                await col.update_one({'_id': nxt['_id']},  {'$set': {'order': cur_order}})
+            return True
+        except Exception as e:
+            return False
+
+    async def reorder_content_up(self, content_id, session_id):
+        """فایل محتوا رو بالاتر ببر"""
+        try:
+            item = await self.bs_content.find_one({'_id': ObjectId(content_id)})
+            if not item: return False
+            cur = item.get('order', 0)
+            if cur == 0: return False
+            prev = await self.bs_content.find_one({'session_id': session_id, 'order': cur - 1})
+            if prev:
+                await self.bs_content.update_one({'_id': item['_id']}, {'$set': {'order': cur - 1}})
+                await self.bs_content.update_one({'_id': prev['_id']}, {'$set': {'order': cur}})
+            return True
+        except: return False
+
+    async def reorder_content_down(self, content_id, session_id):
+        """فایل محتوا رو پایین‌تر ببر"""
+        try:
+            item = await self.bs_content.find_one({'_id': ObjectId(content_id)})
+            if not item: return False
+            cur   = item.get('order', 0)
+            total = await self.bs_content.count_documents({'session_id': session_id})
+            if cur >= total - 1: return False
+            nxt = await self.bs_content.find_one({'session_id': session_id, 'order': cur + 1})
+            if nxt:
+                await self.bs_content.update_one({'_id': item['_id']}, {'$set': {'order': cur + 1}})
+                await self.bs_content.update_one({'_id': nxt['_id']}, {'$set': {'order': cur}})
             return True
         except: return False
 
@@ -203,14 +271,16 @@ class DB:
         except: return None
 
     async def ref_get_files(self, book_id):
-        return await self.ref_files.find({'book_id': book_id}).to_list(10)
+        return await self.ref_files.find({'book_id': book_id}).sort('order', 1).to_list(20)
 
-    async def ref_add_file(self, book_id, lang, file_id):
-        existing = await self.ref_files.find_one({'book_id': book_id, 'lang': lang})
+    async def ref_add_file(self, book_id, lang, file_id, volume=1, description=''):
+        """اضافه یا جایگزین کردن فایل — هر جلد جداست"""
+        existing = await self.ref_files.find_one({'book_id': book_id, 'lang': lang, 'volume': volume})
         if existing:
-            await self.ref_files.update_one({'_id': existing['_id']}, {'$set': {'file_id': file_id, 'uploaded_at': datetime.now().isoformat()}})
+            await self.ref_files.update_one({'_id': existing['_id']}, {'$set': {'file_id': file_id, 'description': description, 'uploaded_at': datetime.now().isoformat()}})
             return str(existing['_id'])
-        r = await self.ref_files.insert_one({'book_id': book_id, 'lang': lang, 'file_id': file_id, 'uploaded_at': datetime.now().isoformat(), 'downloads': 0})
+        count = await self.ref_files.count_documents({'book_id': book_id})
+        r = await self.ref_files.insert_one({'book_id': book_id, 'lang': lang, 'volume': volume, 'description': description, 'file_id': file_id, 'uploaded_at': datetime.now().isoformat(), 'downloads': 0, 'order': count})
         return str(r.inserted_id)
 
     async def ref_get_file(self, fid):
