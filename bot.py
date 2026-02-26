@@ -20,7 +20,8 @@ from questions import (questions_callback, handle_question_answer, ANSWERING,
 from schedule import schedule_callback
 from stats import stats_callback
 from notifications import notifications_callback
-from admin import admin_callback, admin_broadcast_handler, upload_file_handler, BROADCAST
+from admin import admin_callback
+from backup import backup_callback, backup_file_handler, backup_confirm_restore, admin_broadcast_handler, upload_file_handler, BROADCAST
 from utils import cancel_handler
 from profile import profile_callback, profile_text_handler, PROFILE_EDIT_WAITING
 from search import search_handler, SEARCH
@@ -140,6 +141,8 @@ def main():
     app.add_handler(CallbackQueryHandler(stats_callback,         pattern='^stats'))
     app.add_handler(CallbackQueryHandler(notifications_callback, pattern='^notif'))
     app.add_handler(CallbackQueryHandler(admin_callback,         pattern='^admin'))
+    app.add_handler(CallbackQueryHandler(backup_callback,        pattern='^backup:(?!confirm_restore)'))
+    app.add_handler(CallbackQueryHandler(backup_confirm_restore, pattern='^backup:confirm_restore'))
     app.add_handler(CallbackQueryHandler(faq_callback,           pattern='^faq:'))
     app.add_handler(CallbackQueryHandler(content_admin_callback, pattern='^ca:'))
     app.add_handler(CallbackQueryHandler(ticket_callback,        pattern='^ticket:'))
@@ -150,6 +153,8 @@ def main():
 
     async def unified_file_handler(update, context):
         uid = update.effective_user.id
+        if uid == ADMIN_ID and context.user_data.get('backup_mode') == 'waiting_restore':
+            return await backup_file_handler(update, context)
         if context.user_data.get('ca_mode') in ('waiting_file', 'waiting_ref_file') and await db.is_content_admin(uid):
             return await ca_file_handler(update, context)
 
