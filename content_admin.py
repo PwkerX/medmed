@@ -378,30 +378,36 @@ async def content_admin_callback(update: Update, context: ContextTypes.DEFAULT_T
     # ─ آپلود جلد رفرنس ─
     elif action == 'upload_ref_volume_prompt':
         bid  = parts[2]; lang = parts[3]
-        context.user_data.update({'ca_ref_book_id': bid, 'ca_ref_lang': lang})
-        # شمارش جلدهای موجود برای این زبان
         files = await db.ref_get_files(bid)
         existing_vols = [f['volume'] for f in files if f.get('lang') == lang]
         next_vol = max(existing_vols, default=0) + 1
-        context.user_data['ca_ref_volume'] = next_vol
         ll = "🇮🇷 فارسی" if lang == 'fa' else "🌐 لاتین"
-        context.user_data['ca_mode'] = 'waiting_ref_file'
+        context.user_data.update({
+            'ca_ref_book_id': bid,
+            'ca_ref_lang':    lang,
+            'ca_ref_volume':  next_vol,
+            'ca_mode':        'waiting_ref_file',
+        })
         await query.edit_message_text(
             f"📤 <b>آپلود {ll} — جلد {next_vol}</b>\n\n"
             f"فایل PDF را ارسال کنید:\n⌨️ /cancel",
             parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:ref_book:{bid}'))
-        return CA_WAITING_FILE
+        # چون ممکنه خارج از ConversationHandler باشیم، state رو نمی‌تونیم return بدیم
+        # message_router.py با چک ca_mode='waiting_ref_file' این رو handle می‌کنه
 
     elif action == 'upload_ref':
         # جایگزین کردن یک جلد موجود
         bid = parts[2]; lang = parts[3]; vol = int(parts[4])
-        context.user_data.update({'ca_ref_book_id':bid,'ca_ref_lang':lang,
-                                  'ca_ref_volume':vol,'ca_mode':'waiting_ref_file'})
-        ll = "🇮🇷 فارسی" if lang == 'fa' else "🌐 لاتین"
+        ll  = "🇮🇷 فارسی" if lang == 'fa' else "🌐 لاتین"
+        context.user_data.update({
+            'ca_ref_book_id': bid,
+            'ca_ref_lang':    lang,
+            'ca_ref_volume':  vol,
+            'ca_mode':        'waiting_ref_file',
+        })
         await query.edit_message_text(
             f"🔄 <b>جایگزین {ll} جلد {vol}</b>\n\nفایل جدید ارسال کنید:\n⌨️ /cancel",
             parse_mode='HTML', reply_markup=_back_btn("❌ لغو", f'ca:ref_book:{bid}'))
-        return CA_WAITING_FILE
 
     elif action == 'del_ref_file':
         fid = parts[2]; await db.ref_delete_file(fid)
