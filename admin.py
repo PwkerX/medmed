@@ -34,6 +34,7 @@ async def _admin_menu(query):
          InlineKeyboardButton("🗑 حذف برنامه",       callback_data='admin:del_schedule_list')],
         [InlineKeyboardButton("🎫 تیکت‌های باز",     callback_data='ticket:admin_list')],
         [InlineKeyboardButton("📢 ارسال همگانی",      callback_data='admin:broadcast')],
+        [InlineKeyboardButton("💾 پشتیبان‌گیری و بازیابی", callback_data='backup:menu')],
     ]
     await query.edit_message_text(
         "👨‍⚕️ <b>پنل مدیریت</b>\n━━━━━━━━━━━━━━━━",
