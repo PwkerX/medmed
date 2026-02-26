@@ -83,6 +83,7 @@ def main():
         entry_points=[
             CommandHandler('start', start_handler),
             CallbackQueryHandler(questions_callback, pattern='^questions:cr_topic:'),
+            CallbackQueryHandler(content_admin_callback, pattern='^ca:'),
         ],
         states={
             REGISTER:        [CallbackQueryHandler(register_start_callback, pattern="^register:")],
@@ -152,11 +153,20 @@ def main():
         if context.user_data.get('ca_mode') in ('waiting_file', 'waiting_ref_file') and await db.is_content_admin(uid):
             return await ca_file_handler(update, context)
 
+    async def unified_text_handler(update, context):
+        """هندلر متن خارج از conversation — برای ca_mode های آپلود رفرنس"""
+        uid     = update.effective_user.id
+        ca_mode = context.user_data.get('ca_mode', '')
+        if ca_mode in ('waiting_ref_description',) and await db.is_content_admin(uid):
+            return await ca_text_handler(update, context)
+        # بقیه پیام‌ها به route_message برن
+        return await route_message(update, context)
+
     app.add_handler(MessageHandler(
         filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.VOICE,
         unified_file_handler
     ))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unified_text_handler))
 
     async def post_init(application):
         asyncio.create_task(send_exam_reminders(application))
