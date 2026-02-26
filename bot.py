@@ -20,8 +20,8 @@ from questions import (questions_callback, handle_question_answer, ANSWERING,
 from schedule import schedule_callback
 from stats import stats_callback
 from notifications import notifications_callback
-from admin import admin_callback
-from backup import backup_callback, backup_file_handler, backup_confirm_restore, admin_broadcast_handler, upload_file_handler, BROADCAST
+from admin import admin_callback, admin_broadcast_handler, upload_file_handler, BROADCAST
+from backup import backup_callback, backup_file_handler, backup_confirm_restore
 from utils import cancel_handler
 from profile import profile_callback, profile_text_handler, PROFILE_EDIT_WAITING
 from search import search_handler, SEARCH
