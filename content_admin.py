@@ -379,7 +379,7 @@ async def content_admin_callback(update: Update, context: ContextTypes.DEFAULT_T
     elif action == 'upload_ref_volume_prompt':
         bid  = parts[2]; lang = parts[3]
         files = await db.ref_get_files(bid)
-        existing_vols = [f['volume'] for f in files if f.get('lang') == lang]
+        existing_vols = [f.get('volume', 1) for f in files if f.get('lang') == lang]
         next_vol = max(existing_vols, default=0) + 1
         ll = "🇮🇷 فارسی" if lang == 'fa' else "🌐 لاتین"
         context.user_data.update({
