@@ -507,5 +507,55 @@ class DB:
         refs = await self.ref_files.count_documents({'uploaded_at': {'$gt': since}})
         return bs + refs
 
+    async def content_admin_stats(self):
+        """آمار جامع برای پنل ادمین محتوا"""
+        bs_lessons  = await self.bs_lessons.count_documents({})
+        bs_sessions = await self.bs_sessions.count_documents({})
+        bs_total    = await self.bs_content.count_documents({})
+        bs_video    = await self.bs_content.count_documents({'type': 'video'})
+        bs_pdf      = await self.bs_content.count_documents({'type': 'pdf'})
+        bs_ppt      = await self.bs_content.count_documents({'type': 'ppt'})
+        bs_voice    = await self.bs_content.count_documents({'type': 'voice'})
+        bs_note     = await self.bs_content.count_documents({'type': 'note'})
+        bs_test     = await self.bs_content.count_documents({'type': 'test'})
+        ref_subjects = await self.ref_subjects.count_documents({})
+        ref_books    = await self.ref_books.count_documents({})
+        ref_files    = await self.ref_files.count_documents({})
+        ref_fa       = await self.ref_files.count_documents({'lang': 'fa'})
+        ref_en       = await self.ref_files.count_documents({'lang': 'en'})
+        q_total    = await self.questions.count_documents({'approved': True})
+        q_pending  = await self.questions.count_documents({'approved': False})
+        q_by_bot   = await self.questions.count_documents({'approved': True, 'by_bot': True})
+        q_by_users = await self.questions.count_documents({'approved': True, 'by_bot': {'$ne': True}})
+        # آمار دانلود کل
+        pipeline_dl = [{'$group': {'_id': None, 'total': {'$sum': '$downloads'}}}]
+        r_bs  = await self.bs_content.aggregate(pipeline_dl).to_list(1)
+        r_ref = await self.ref_files.aggregate(pipeline_dl).to_list(1)
+        total_dl = (r_bs[0]['total'] if r_bs else 0) + (r_ref[0]['total'] if r_ref else 0)
+        # کاربران تأیید شده
+        users_count = await self.users.count_documents({'approved': True})
+        return {
+            'bs_lessons': bs_lessons, 'bs_sessions': bs_sessions,
+            'bs_total': bs_total, 'bs_video': bs_video, 'bs_pdf': bs_pdf,
+            'bs_ppt': bs_ppt, 'bs_voice': bs_voice, 'bs_note': bs_note, 'bs_test': bs_test,
+            'ref_subjects': ref_subjects, 'ref_books': ref_books, 'ref_files': ref_files,
+            'ref_fa': ref_fa, 'ref_en': ref_en,
+            'q_total': q_total, 'q_pending': q_pending,
+            'q_by_bot': q_by_bot, 'q_by_users': q_by_users,
+            'total_downloads': total_dl, 'users_count': users_count,
+        }
+
+    async def get_question_by_id(self, qid):
+        try:
+            return await self.questions.find_one({'_id': ObjectId(qid)})
+        except: return None
+
+    async def get_questions_for_pdf(self, lesson=None, topic=None, count=20):
+        q = {'approved': True}
+        if lesson: q['lesson'] = lesson
+        if topic and topic != 'همه': q['topic'] = topic
+        return await self.questions.find(q).to_list(count)
+
+
 
 db = DB()
