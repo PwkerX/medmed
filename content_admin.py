@@ -417,6 +417,19 @@ async def content_admin_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     # ══════════ FAQ ══════════
 
+    elif action == 'overview':
+        await _show_overview(query)
+
+    elif action == 'create_q':
+        # redirect به بانک سوال برای طراحی سوال
+        kb = [[InlineKeyboardButton("✏️ شروع طراحی سوال", callback_data='questions:create_ca')],
+              [InlineKeyboardButton("🔙 بازگشت", callback_data='ca:main')]]
+        await query.edit_message_text(
+            "✏️ <b>طراحی سوال (ادمین محتوا)</b>\n\n"
+            "سوالات شما با برچسب <b>«طراحی شده توسط بات»</b> مشخص می‌شوند\n"
+            "و بدون نیاز به تأیید، مستقیم در بانک سوال قرار می‌گیرند.",
+            parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+
     elif action == 'faq':
         await _show_faq(query)
 
@@ -437,13 +450,50 @@ async def content_admin_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 async def _show_main(query):
     kb = [
-        [InlineKeyboardButton("📘 مدیریت علوم پایه", callback_data='ca:terms')],
-        [InlineKeyboardButton("📚 مدیریت رفرنس‌ها",  callback_data='ca:refs')],
-        [InlineKeyboardButton("❓ مدیریت FAQ",         callback_data='ca:faq')],
+        [InlineKeyboardButton("📊 نمای کلی و آمار",   callback_data='ca:overview')],
+        [InlineKeyboardButton("📘 مدیریت علوم پایه",  callback_data='ca:terms')],
+        [InlineKeyboardButton("📚 مدیریت رفرنس‌ها",   callback_data='ca:refs')],
+        [InlineKeyboardButton("✏️ طراحی سوال",         callback_data='ca:create_q')],
+        [InlineKeyboardButton("❓ مدیریت FAQ",          callback_data='ca:faq')],
     ]
     await query.edit_message_text("🎓 <b>پنل ادمین محتوا</b>",
         parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
+
+
+async def _show_overview(query):
+    """نمای کلی آمار برای ادمین محتوا"""
+    s = await db.content_admin_stats()
+
+    text = (
+        "📊 <b>نمای کلی پنل محتوا</b>\n"
+        "━━━━━━━━━━━━━━━━\n\n"
+        "📘 <b>علوم پایه:</b>\n"
+        f"  📖 درس‌ها: <b>{s['bs_lessons']}</b>  |  "
+        f"📌 جلسات: <b>{s['bs_sessions']}</b>\n"
+        f"  📁 کل فایل: <b>{s['bs_total']}</b>\n"
+        f"  🎥 ویدیو: <b>{s['bs_video']}</b>  "
+        f"📄 جزوه PDF: <b>{s['bs_pdf']}</b>\n"
+        f"  📊 پاورپوینت: <b>{s['bs_ppt']}</b>  "
+        f"🎙 ویس: <b>{s['bs_voice']}</b>\n"
+        f"  📝 نکات: <b>{s['bs_note']}</b>  "
+        f"🧪 تست: <b>{s['bs_test']}</b>\n\n"
+        "📚 <b>رفرنس‌ها:</b>\n"
+        f"  📖 درس‌ها: <b>{s['ref_subjects']}</b>  |  "
+        f"📘 کتاب‌ها: <b>{s['ref_books']}</b>\n"
+        f"  📁 فایل‌ها: <b>{s['ref_files']}</b>  "
+        f"(🇮🇷 {s['ref_fa']}  🌐 {s['ref_en']})\n\n"
+        "🧪 <b>بانک سوال:</b>\n"
+        f"  ✅ تأیید شده: <b>{s['q_total']}</b>  |  "
+        f"⏳ در انتظار: <b>{s['q_pending']}</b>\n"
+        f"  🤖 طراحی بات: <b>{s['q_by_bot']}</b>  "
+        f"👤 طراحی کاربران: <b>{s['q_by_users']}</b>\n"
+    )
+    kb = [
+        [InlineKeyboardButton("🔄 بروزرسانی", callback_data='ca:overview')],
+        [InlineKeyboardButton("🔙 بازگشت",    callback_data='ca:main')],
+    ]
+    await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 async def _show_terms(query, back='ca:main'):
     kb = []
